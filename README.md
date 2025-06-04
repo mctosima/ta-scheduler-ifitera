@@ -34,8 +34,20 @@ python main.py --single
 ```
 
 For custom files:
+
+modify `config.ini` to set your input and output paths:
+```ini
+[input]
+source = <input/your_availability.csv>
+target = <input/your_requests.csv>
+
+[output]
+destination = <output/results.csv>
+```
+
+Then run (for other default settings):
 ```bash
-python main.py -a input/your_availability.csv -r input/your_requests.csv -o output/results.csv
+python main.py
 ```
 
 ## File Structure
@@ -56,7 +68,9 @@ ta-scheduler/
 │   └── schedule_request_multiple.csv
 ├── output/                   # Generated results
 │   └── *_with_recommendations.csv
+├── config.ini                # Configuration file for paths and settings
 └── README.md
+
 ```
 
 ## Input File Formats
@@ -124,6 +138,10 @@ The system uses dynamic configuration through `src/config.py`:
 - **Column Mappings**: Flexible CSV column name handling
 - **Time Formatting**: Customizable date/time output formats
 
+We also use a `config.ini` file for easy path management. Currently supports:
+- input source and target paths for availability and requests
+- output destination path for results
+
 ## Architecture
 
 ### Core Components
@@ -147,9 +165,6 @@ The system uses dynamic configuration through `src/config.py`:
 python main.py [OPTIONS]
 
 Options:
-  -a, --availability PATH    Path to availability CSV file
-  -r, --requests PATH        Path to requests CSV file  
-  -o, --output PATH          Path to output CSV file
   --setup                    Setup project directory structure
   --multiple                 Use multiple requests file (default)
   --single                   Use single request file
@@ -169,9 +184,20 @@ Uses:
 - Output: `output/schedule_request_multiple_with_recommendations.csv`
 
 ### Example 2: Custom File Scheduling
+Modify `config.ini` to set your input and output paths, then run:
+```ini
+[input]
+source = input/your_availability.csv
+target = input/your_requests.csv
+
+[output]
+destination = output/results.csv
+```
+
+Then run:
 
 ```bash
-python main.py -a input/availability.csv -r input/requests.csv -o output/results.csv
+python main.py
 ```
 
 ### Example 3: Single Student Request

@@ -7,6 +7,7 @@ with different input/output configurations.
 """
 
 import sys
+import configparser
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -216,12 +217,8 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='Thesis Defense Scheduler')
-    parser.add_argument('--availability', '-a', 
-                       help='Path to availability CSV file')
-    parser.add_argument('--requests', '-r',
-                       help='Path to requests CSV file')
-    parser.add_argument('--output', '-o',
-                       help='Path to output CSV file')
+    parser.add_argument('--config', '-c', 
+                       help='Path to configuration file (default: config.ini)', default='config.ini')
     parser.add_argument('--setup', action='store_true',
                        help='Setup project directory structure')
     parser.add_argument('--multiple', action='store_true',
@@ -230,6 +227,21 @@ def main():
                        help='Use single request file')
     
     args = parser.parse_args()
+    
+    # get input and output file paths from config
+    try:
+        config = configparser.ConfigParser()
+        config.read(args.config)
+        # add to args
+        args.availability = config["input"]["source"].strip('"')
+        args.requests = config["input"]["target"].strip('"')
+        args.output = config["output"]["destination"].strip('"')
+    except KeyError as e:
+        print(f"❌ Configuration error: Missing key {e}")
+        # using default values
+        print("Using default input/output files from config.py")
+        args.availability = None # Default set to None
+        args.requests = None # Default set to None
     
     try:
         app = ThesisSchedulerApp()
