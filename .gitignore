@@ -1,9 +1,66 @@
-/.mypy_cache
-/.venv
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.mypy_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# Legacy files (from monolithic version)
 /avail_20250610.csv
 /avail_20250610_clean.csv
 /schedule_request.csv
 schedule_request_multiple_with_recommendations.csv
-.gitignore
 schedule_request_with_recommendations.csv
 schedule_request_multiple.csv
+
+# Optional: Uncomment to ignore generated output files
+# output/*.csv

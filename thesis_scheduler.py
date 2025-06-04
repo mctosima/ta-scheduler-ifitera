@@ -116,13 +116,14 @@ class ThesisScheduler:
             field1: First expertise field required
             field2: Second expertise field required
             spv1: First supervisor name or code
-            spv2: Second supervisor name or code (optional)
+            spv2: Second supervisor name or code (optional, "-" indicates no second supervisor)
             
         Returns:
             Dictionary with available judges and their time slots
         """
         supervisor1_code = self._get_supervisor_code(spv1)
-        supervisor2_code = self._get_supervisor_code(spv2) if spv2 else ""
+        # Treat "-" as no supervisor (common convention for indicating single supervisor)
+        supervisor2_code = self._get_supervisor_code(spv2) if spv2 and spv2.strip() != "-" else ""
         
         # Find judges with matching expertise
         matching_judges = []
@@ -141,8 +142,8 @@ class ThesisScheduler:
                 supervisor1_code.upper() == judge_name.upper()):
                 supervisor1_judge = judge_dict
             
-            # Check if this is supervisor 2 (if provided)
-            if spv2 and (supervisor2_code in judge_expertise or 
+            # Check if this is supervisor 2 (if provided and not "-")
+            if spv2 and spv2.strip() != "-" and (supervisor2_code in judge_expertise or 
                 spv2.lower() in judge_name.lower() or
                 supervisor2_code.upper() == judge_name.upper()):
                 supervisor2_judge = judge_dict
@@ -237,7 +238,7 @@ class ThesisScheduler:
                 supervisors_found.append(judges_info['supervisor2'])
                 supervisor_codes.append(self._get_judge_code(judges_info['supervisor2']['Sub_Keilmuan']))
                 print(f"✓ Supervisor 2: {supervisor_codes[-1]}")
-            elif request['supervisor2']:  # Only warn if supervisor2 was actually provided
+            elif request['supervisor2'] and request['supervisor2'].strip() != "-":  # Only warn if supervisor2 was actually provided (not "-")
                 print(f"⚠ Supervisor 2 '{request['supervisor2']}' not found")
             
             if not supervisors_found:
@@ -255,14 +256,9 @@ class ThesisScheduler:
                 if judge_code not in supervisor_codes:
                     suitable_judges.append(judge)
             
-            # Need at least 1-2 additional judges (total panel should be 3-5 members)
-            min_additional_judges = max(1, 3 - len(supervisors_found))  # Minimum 3 total, prefer 4-5
-            if len(suitable_judges) < min_additional_judges:
-                print(f"⚠ Not enough suitable judges found (need at least {min_additional_judges}, found {len(suitable_judges)})")
-                request['scheduled'] = False
-                request['reason'] = f"Insufficient judges (found {len(suitable_judges)}, need at least {min_additional_judges})"
-                scheduled_recommendations.append(request)
-                continue
+            # Need exactly 2 judges (non-supervisors) - can have 0, 1, or 2 available
+            # We'll proceed even with 0 or 1 judges and fill with "NONE" as needed
+            print(f"✓ Found {len(suitable_judges)} suitable judges (need exactly 2 for recommendations)")
             
             # Try to find a time slot that works for supervisors + additional judges
             best_slot = None
@@ -290,46 +286,65 @@ class ThesisScheduler:
                     if self.is_judge_available_at_time(judge_code, time_slot):
                         available_judges_for_slot.append(judge)
                 
-                # Need at least 2 judges plus supervisor (3 total minimum)
-                if len(available_judges_for_slot) >= 2:
-                    best_slot = time_slot
-                    # Select best judges (prioritize field matches)
-                    field1, field2 = request['fields'][0].upper(), request['fields'][1].upper()
-                    
-                    # Prioritize judges with exact field matches
-                    field1_matches = [j for j in available_judges_for_slot 
-                                    if field1 in self._parse_expertise(j['Sub_Keilmuan'])]
-                    field2_matches = [j for j in available_judges_for_slot 
-                                    if field2 in self._parse_expertise(j['Sub_Keilmuan'])]
-                    
-                    best_judges = supervisors_found.copy()  # Start with all supervisors
-                    
-                    # Add field-specific judges
-                    if field1_matches:
-                        best_judges.append(field1_matches[0])
-                    if field2_matches and len(best_judges) < 5:
-                        for judge in field2_matches:
-                            if judge not in best_judges:
-                                best_judges.append(judge)
-                                break
-                    
-                    # Fill remaining slots if needed (max 5 judges total)
-                    while len(best_judges) < 5 and len(best_judges) < len(available_judges_for_slot) + len(supervisors_found):
-                        for judge in available_judges_for_slot:
-                            if judge not in best_judges:
-                                best_judges.append(judge)
-                                break
-                        else:
+                # We'll take whatever judges are available (0, 1, or 2+) and ensure exactly 2 in output
+                best_slot = time_slot
+                # Select exactly 2 judges (prioritize field matches)
+                field1, field2 = request['fields'][0].upper(), request['fields'][1].upper()
+                
+                # Prioritize judges with exact field matches
+                field1_matches = [j for j in available_judges_for_slot 
+                                if field1 in self._parse_expertise(j['Sub_Keilmuan'])]
+                field2_matches = [j for j in available_judges_for_slot 
+                                if field2 in self._parse_expertise(j['Sub_Keilmuan'])]
+                
+                # Select exactly 2 judges
+                selected_judges = []
+                
+                # First priority: field1 match
+                if field1_matches:
+                    selected_judges.append(field1_matches[0])
+                
+                # Second priority: field2 match (different from field1 match)
+                if len(selected_judges) < 2 and field2_matches:
+                    for judge in field2_matches:
+                        if judge not in selected_judges:
+                            selected_judges.append(judge)
                             break
-                    
-                    break  # Found a suitable slot
+                
+                # Fill remaining slots from available judges
+                if len(selected_judges) < 2:
+                    for judge in available_judges_for_slot:
+                        if judge not in selected_judges:
+                            selected_judges.append(judge)
+                            if len(selected_judges) == 2:
+                                break
+                
+                best_judges = supervisors_found.copy()  # Include supervisors
+                best_judges.extend(selected_judges)  # Add the selected judges
+                
+                break  # Found a suitable slot
             
             if best_slot and best_judges:
                 # Reserve the time slot
-                judge_codes = [self._get_judge_code(j['Sub_Keilmuan']) for j in best_judges]
-                self.reserve_time_slot(best_slot, judge_codes)
+                all_judge_codes = [self._get_judge_code(j['Sub_Keilmuan']) for j in best_judges]
+                self.reserve_time_slot(best_slot, all_judge_codes)
                 
-                # Create successful recommendation
+                # Create successful recommendation with exactly 2 non-supervisor judges
+                # Separate supervisors from other judges
+                non_supervisor_judges = [j for j in best_judges if j not in supervisors_found]
+                
+                # Ensure exactly 2 judges in recommendation (fill with NONE if needed)
+                judge_recommendations = []
+                if len(non_supervisor_judges) >= 1:
+                    judge_recommendations.append(self._get_judge_code(non_supervisor_judges[0]['Sub_Keilmuan']))
+                else:
+                    judge_recommendations.append("NONE")
+                    
+                if len(non_supervisor_judges) >= 2:
+                    judge_recommendations.append(self._get_judge_code(non_supervisor_judges[1]['Sub_Keilmuan']))
+                else:
+                    judge_recommendations.append("NONE")
+                
                 request['scheduled'] = True
                 request['scheduled_time'] = self.format_time_slot(best_slot)
                 request['scheduled_judges'] = [
@@ -339,13 +354,16 @@ class ThesisScheduler:
                     }
                     for judge in best_judges
                 ]
+                request['judge_recommendations'] = judge_recommendations  # Exactly 2 judges
                 
                 print(f"✓ Scheduled at {request['scheduled_time']}")
                 print(f"✓ Panel: {', '.join([j['code'] for j in request['scheduled_judges']])}")
+                print(f"✓ Judge Recommendations: {' | '.join(judge_recommendations)}")
                 
             else:
                 request['scheduled'] = False
                 request['reason'] = "No available time slot found for required panel"
+                request['judge_recommendations'] = ["NONE", "NONE"]  # Default to NONE when can't schedule
                 print(f"✗ Could not find suitable time slot")
             
             scheduled_recommendations.append(request)
@@ -473,7 +491,7 @@ class ThesisScheduler:
             supervisor2_code = self._get_judge_code(judges_info['supervisor2']['Sub_Keilmuan'])
             supervisor_codes.append(supervisor2_code)
             print(f"✓ Supervisor 2 found: {supervisor2_code}")
-        elif spv2:  # Only warn if supervisor2 was actually provided
+        elif spv2 and spv2.strip() != "-":  # Only warn if supervisor2 was actually provided (not "-")
             print(f"⚠ Supervisor 2 '{spv2}' not found in availability data")
         
         # If at least one supervisor is found, prioritize slots where supervisors are available
@@ -587,7 +605,7 @@ class ThesisScheduler:
                     'supervisor2': request['supervisor2'],
                     'fields': request['fields'],
                     'recommended_times': [request['scheduled_time']],  # Single time slot
-                    'recommended_judges': [j['code'] for j in request['scheduled_judges'] if j['role'] != 'Supervisor'],
+                    'recommended_judges': request.get('judge_recommendations', ['NONE', 'NONE']),  # Exactly 2 judges
                     'scheduled': True,
                     'reason': 'Successfully scheduled'
                 }
@@ -599,7 +617,7 @@ class ThesisScheduler:
                     'supervisor2': request['supervisor2'],
                     'fields': request['fields'],
                     'recommended_times': [],
-                    'recommended_judges': [],
+                    'recommended_judges': request.get('judge_recommendations', ['NONE', 'NONE']),  # Exactly 2 judges
                     'scheduled': False,
                     'reason': request.get('reason', 'Unknown error')
                 }
@@ -623,11 +641,17 @@ class ThesisScheduler:
             if recommendation['scheduled']:
                 # Single time slot (not multiple)
                 original_row['Date Time (YYYYMMDD-HHMM)'] = recommendation['recommended_times'][0]
-                # Judges excluding supervisor
-                original_row['List of recommendation'] = ' | '.join(recommendation['recommended_judges'])
+                # Exactly 2 judges (with NONE as placeholder if needed)
+                judges_list = recommendation['recommended_judges']
+                if len(judges_list) >= 2:
+                    original_row['List of recommendation'] = f"{judges_list[0]} | {judges_list[1]}"
+                elif len(judges_list) == 1:
+                    original_row['List of recommendation'] = f"{judges_list[0]} | NONE"
+                else:
+                    original_row['List of recommendation'] = "NONE | NONE"
             else:
                 original_row['Date Time (YYYYMMDD-HHMM)'] = f"NOT_SCHEDULED: {recommendation['reason']}"
-                original_row['List of recommendation'] = "NO_JUDGES_AVAILABLE"
+                original_row['List of recommendation'] = "NONE | NONE"
             
             updated_rows.append(original_row)
         
@@ -648,13 +672,15 @@ class ThesisScheduler:
             print(f"\n🗓️  SCHEDULED DEFENSES:")
             for recommendation in recommendations:
                 if recommendation['scheduled']:
-                    print(f"   • {recommendation['student_name']} - {recommendation['recommended_times'][0]} - Panel: {' | '.join(recommendation['recommended_judges'])}")
+                    judges_display = ' | '.join(recommendation['recommended_judges'])
+                    print(f"   • {recommendation['student_name']} - {recommendation['recommended_times'][0]} - Judges: {judges_display}")
         
         if total_count - scheduled_count > 0:
             print(f"\n❌ FAILED TO SCHEDULE:")
             for recommendation in recommendations:
                 if not recommendation['scheduled']:
-                    print(f"   • {recommendation['student_name']} - {recommendation['reason']}")
+                    judges_display = ' | '.join(recommendation['recommended_judges'])
+                    print(f"   • {recommendation['student_name']} - {recommendation['reason']} - Judges: {judges_display}")
         
         # Show scheduling conflicts summary
         if self.scheduled_slots:
