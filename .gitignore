@@ -3,3 +3,7 @@
 /avail_20250610.csv
 /avail_20250610_clean.csv
 /schedule_request.csv
+schedule_request_multiple_with_recommendations.csv
+.gitignore
+schedule_request_with_recommendations.csv
+schedule_request_multiple.csv

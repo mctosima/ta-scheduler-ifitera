@@ -48,6 +48,19 @@ class ThesisScheduler:
         # Clean up the data
         self._clean_availability_data()
         self._clean_request_data()
+        
+        # Debug: Print column names to verify structure
+        print(f"Request CSV columns: {list(self.request_df.columns)}")
+        
+        # Standardize column names to handle variations
+        if 'SPV 1' in self.request_df.columns and 'SPV 2' in self.request_df.columns:
+            print("Found SPV 1 and SPV 2 columns - using two supervisor format")
+        elif 'SPV' in self.request_df.columns:
+            print("Found single SPV column - converting to two supervisor format")
+            # Add empty SPV 2 column for compatibility
+            self.request_df['SPV 2'] = ''
+            # Rename SPV to SPV 1
+            self.request_df = self.request_df.rename(columns={'SPV': 'SPV 1'})
     
     def _clean_availability_data(self):
         """Clean and process the availability data."""
@@ -422,47 +435,67 @@ class ThesisScheduler:
         nim = request_row.get('Nim', request_row.get('nim', ''))
         field1 = request_row.get('Field 1', request_row.get('field1', ''))
         field2 = request_row.get('Field 2', request_row.get('field2', ''))
-        spv = request_row.get('SPV', request_row.get('spv', ''))
+        spv1 = request_row.get('SPV 1', request_row.get('spv1', ''))
+        spv2 = request_row.get('SPV 2', request_row.get('spv2', ''))
         
         print(f"\nProcessing request for {nama} (NIM: {nim})")
-        print(f"Fields: {field1}, {field2} | Supervisor: {spv}")
+        print(f"Fields: {field1}, {field2} | Supervisors: {spv1}, {spv2}")
         
         # Find available judges
-        judges_info = self.find_available_judges(field1, field2, spv)
+        judges_info = self.find_available_judges(field1, field2, spv1, spv2)
         
         recommendations = {
             'student_name': nama,
             'nim': nim,
-            'supervisor': spv,
+            'supervisor1': spv1,
+            'supervisor2': spv2,
             'fields': [field1, field2],
-            'supervisor_found': judges_info['supervisor'] is not None,
+            'supervisor_found': judges_info['supervisor1'] is not None or judges_info['supervisor2'] is not None,
             'recommended_times': [],
             'recommended_judges': [],
             'all_possible_judges': []
         }
         
-        # If supervisor is found, prioritize slots where supervisor is available
-        if judges_info['supervisor']:
-            supervisor_code = self._get_judge_code(judges_info['supervisor']['Sub_Keilmuan'])
-            print(f"✓ Supervisor found: {supervisor_code}")
+        # Collect all supervisors found
+        supervisors_found = []
+        supervisor_codes = []
+        
+        if judges_info['supervisor1']:
+            supervisors_found.append(judges_info['supervisor1'])
+            supervisor1_code = self._get_judge_code(judges_info['supervisor1']['Sub_Keilmuan'])
+            supervisor_codes.append(supervisor1_code)
+            print(f"✓ Supervisor 1 found: {supervisor1_code}")
+        else:
+            print(f"⚠ Supervisor 1 '{spv1}' not found in availability data")
             
-            # Find expertise-matching judges (excluding the supervisor)
+        if judges_info['supervisor2']:
+            supervisors_found.append(judges_info['supervisor2'])
+            supervisor2_code = self._get_judge_code(judges_info['supervisor2']['Sub_Keilmuan'])
+            supervisor_codes.append(supervisor2_code)
+            print(f"✓ Supervisor 2 found: {supervisor2_code}")
+        elif spv2:  # Only warn if supervisor2 was actually provided
+            print(f"⚠ Supervisor 2 '{spv2}' not found in availability data")
+        
+        # If at least one supervisor is found, prioritize slots where supervisors are available
+        if supervisors_found:
+            
+            # Find expertise-matching judges (excluding the supervisors)
             expertise_judges = []
             for judge in judges_info['expertise_matches']:
                 judge_code = self._get_judge_code(judge['Sub_Keilmuan'])
                 judge_expertise = self._parse_expertise(judge['Sub_Keilmuan'])
                 
-                # Skip if this is the supervisor
-                if judge_code == supervisor_code:
+                # Skip if this is any of the supervisors
+                if judge_code in supervisor_codes:
                     continue
                     
                 if any(exp in [field1.upper(), field2.upper()] for exp in judge_expertise):
                     expertise_judges.append(judge)
             
-            # Combine supervisor with expertise-matching judges
-            required_judges = [judges_info['supervisor']]
+            # Combine supervisors with expertise-matching judges
+            required_judges = supervisors_found.copy()
             
-            # Add best matching expertise judges (aim for 3-4 total judges)
+            # Add best matching expertise judges (aim for 3-5 total judges)
             field1_judges = [j for j in expertise_judges if field1.upper() in self._parse_expertise(j['Sub_Keilmuan'])]
             field2_judges = [j for j in expertise_judges if field2.upper() in self._parse_expertise(j['Sub_Keilmuan'])]
             
@@ -472,7 +505,7 @@ class ThesisScheduler:
                     required_judges.append(judge)
             
             for judge in field2_judges[:2]:  # Max 2 from field2
-                if judge not in required_judges and len(required_judges) < 4:
+                if judge not in required_judges and len(required_judges) < 5:
                     required_judges.append(judge)
             
             # Find common available time slots
@@ -485,13 +518,13 @@ class ThesisScheduler:
             recommendations['recommended_judges'] = [
                 {
                     'code': self._get_judge_code(judge['Sub_Keilmuan']),
-                    'role': 'Supervisor' if judge == judges_info['supervisor'] else 'Examiner'
+                    'role': 'Supervisor' if judge in supervisors_found else 'Examiner'
                 }
                 for judge in required_judges
             ]
             
         else:
-            print(f"⚠ Supervisor '{spv}' not found in availability data")
+            print(f"⚠ No supervisors found")
             
             # Still try to find expertise-matching judges
             expertise_judges = judges_info['expertise_matches'][:4]  # Limit to 4 judges
@@ -550,7 +583,8 @@ class ThesisScheduler:
                 recommendation = {
                     'student_name': request['student_name'],
                     'nim': request['nim'],
-                    'supervisor': request['supervisor'],
+                    'supervisor1': request['supervisor1'],
+                    'supervisor2': request['supervisor2'],
                     'fields': request['fields'],
                     'recommended_times': [request['scheduled_time']],  # Single time slot
                     'recommended_judges': [j['code'] for j in request['scheduled_judges'] if j['role'] != 'Supervisor'],
@@ -561,7 +595,8 @@ class ThesisScheduler:
                 recommendation = {
                     'student_name': request['student_name'],
                     'nim': request['nim'],
-                    'supervisor': request['supervisor'],
+                    'supervisor1': request['supervisor1'],
+                    'supervisor2': request['supervisor2'],
                     'fields': request['fields'],
                     'recommended_times': [],
                     'recommended_judges': [],
