@@ -1,0 +1,5 @@
+/.mypy_cache
+/.venv
+/avail_20250610.csv
+/avail_20250610_clean.csv
+/schedule_request.csv
