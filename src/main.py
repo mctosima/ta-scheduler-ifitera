@@ -14,6 +14,7 @@ from .config import Config
 from .models import DataLoader, ScheduleResult
 from .scheduler import SchedulingEngine
 from .utils import ReportGenerator, ValidationHelper
+from .csv_cleaner import AvailabilityCSVCleaner
 
 
 class ThesisSchedulerApp:
@@ -52,9 +53,12 @@ class ThesisSchedulerApp:
         print("="*60)
         
         try:
+            # Clean availability file first if it's the raw file
+            cleaned_availability_file = self._clean_availability_file_if_needed(availability_file)
+            
             # Load data
-            print(f"Loading availability data from: {availability_file}")
-            availability_df = DataLoader.load_availability_data(availability_file)
+            print(f"Loading availability data from: {cleaned_availability_file}")
+            availability_df = DataLoader.load_availability_data(cleaned_availability_file)
             
             print(f"Loading request data from: {request_file}")
             request_df = DataLoader.load_request_data(request_file)
@@ -82,7 +86,8 @@ class ThesisSchedulerApp:
             session_summary = self.engine.get_session_summary()
             summary_text = self.report_generator.generate_scheduling_summary(
                 [self._result_to_dict(r) for r in results],
-                session_summary['time_slot_utilization']
+                session_summary['time_slot_utilization'],
+                session_summary['judge_workload']
             )
             
             print(f"\n{summary_text}")
@@ -227,7 +232,72 @@ class ThesisSchedulerApp:
         print("✅ Project structure setup complete!")
         print(f"Input directory: {self.config.input_dir}")
         print(f"Output directory: {self.config.output_dir}")
-
+    
+    def _clean_availability_file_if_needed(self, availability_file: str) -> str:
+        """
+        Clean the availability file if it's in raw format (with merged cells).
+        
+        Args:
+            availability_file: Path to the availability file
+            
+        Returns:
+            Path to the cleaned file (either the original if already clean, or new cleaned file)
+        """
+        import pandas as pd
+        from pathlib import Path
+        
+        # Check if the file needs cleaning by reading the first few rows
+        try:
+            # Read first 3 rows to check the format
+            sample_df = pd.read_csv(availability_file, nrows=3)
+            
+            # Check if this looks like a raw file (has merged cell indicators)
+            # Raw files have dates like "Tuesday, 10 June 2025" in the header
+            needs_cleaning = False
+            
+            # Check column headers for date patterns
+            for col in sample_df.columns:
+                if col and (
+                    'June 2025' in str(col) or 
+                    'July 2025' in str(col) or
+                    col.startswith('Unnamed:') or
+                    col in ['1', '2', '3', '4']  # Common unnamed columns from merged cells
+                ):
+                    needs_cleaning = True
+                    break
+            
+            # Also check if first row contains date information
+            if not needs_cleaning:
+                first_row = sample_df.iloc[0] if len(sample_df) > 0 else None
+                if first_row is not None:
+                    for value in first_row:
+                        if value and ('June 2025' in str(value) or 'July 2025' in str(value)):
+                            needs_cleaning = True
+                            break
+            
+            if not needs_cleaning:
+                print("✓ Availability file is already in clean format")
+                return availability_file
+            
+            # File needs cleaning
+            print("📋 Detecting raw availability file format - cleaning required")
+            print("🔧 Automatically cleaning availability file...")
+            
+            # Create cleaned file path
+            input_path = Path(availability_file)
+            output_path = input_path.parent / f"{input_path.stem}_cleaned{input_path.suffix}"
+            
+            # Clean the file
+            cleaner = AvailabilityCSVCleaner()
+            cleaner.clean_availability_csv(availability_file, str(output_path))
+            
+            print(f"✅ Cleaned availability file saved to: {output_path}")
+            return str(output_path)
+            
+        except Exception as e:
+            print(f"⚠️  Error checking/cleaning availability file: {e}")
+            print("📋 Proceeding with original file...")
+            return availability_file
 
 def main():
     """Main entry point for the scheduler application."""

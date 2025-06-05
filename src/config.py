@@ -71,7 +71,8 @@ class Config:
         return {
             'required_judges': self.config.getint('SCHEDULING', 'required_judges', fallback=2),
             'max_panel_size': self.config.getint('SCHEDULING', 'max_panel_size', fallback=5),
-            'max_recommendations': self.config.getint('SCHEDULING', 'max_recommendations', fallback=5)
+            'max_recommendations': self.config.getint('SCHEDULING', 'max_recommendations', fallback=5),
+            'max_parallel_defenses': self.config.getint('SCHEDULING', 'max_parallel_defenses', fallback=3)
         }
     
     @property

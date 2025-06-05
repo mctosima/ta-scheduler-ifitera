@@ -8,6 +8,7 @@ with available judges based on expertise and availability.
 
 import pandas as pd
 from typing import List, Dict, Optional, Tuple
+from itertools import combinations
 from .models import Judge, Student, ScheduleResult, PanelConfiguration, SchedulingSession
 from .utils import DataProcessor, TimeFormatter, JudgeSelector
 from .config import Config
@@ -22,6 +23,9 @@ class SchedulingEngine:
         self.time_formatter = TimeFormatter(config)
         self.judge_selector = JudgeSelector(config)
         self.session = SchedulingSession()
+        
+        # Connect the session to judge selector for workload balancing
+        self.judge_selector.set_session(self.session)
     
     def load_judges(self, availability_df: pd.DataFrame) -> List[Judge]:
         """
@@ -209,7 +213,14 @@ class SchedulingEngine:
         all_time_slots = list(required_judges[0].availability.keys())
         available_slots = []
         
+        constraints = self.config.scheduling_constraints
+        max_parallel = constraints.get('max_parallel_defenses', 3)
+        
         for time_slot in all_time_slots:
+            # Check if we can schedule another parallel defense in this time slot
+            if not self.session.can_schedule_parallel_defense(time_slot, max_parallel):
+                continue
+                
             # Check if all judges are available
             all_available = True
             for judge in required_judges:
@@ -223,7 +234,7 @@ class SchedulingEngine:
         
         return available_slots
     
-    def create_panel_configuration(self, student: Student, judges: List[Judge]) -> Optional[PanelConfiguration]:
+    def create_panel_configuration(self, student: Student, judges: List[Judge]) -> Optional[Tuple[PanelConfiguration, str]]:
         """
         Create an optimal panel configuration for a student.
         
@@ -232,7 +243,8 @@ class SchedulingEngine:
             judges: List of all available judges
             
         Returns:
-            PanelConfiguration if successful, None otherwise
+            Tuple of (PanelConfiguration, status) if successful, None otherwise
+            Status can be "Field and Time Match" or "Time Match Only"
         """
         print(f"\n--- Creating panel for {student.name} ---")
         
@@ -242,10 +254,40 @@ class SchedulingEngine:
             print("⚠ No supervisors found")
             return None
         
+        # TIER 1: Try field and time matching first
+        print("🎯 Attempting field and time matching...")
+        panel_result = self._try_field_and_time_match(student, judges, supervisor_judges)
+        if panel_result:
+            print("✅ Successfully matched both field expertise and time!")
+            return panel_result, "Field and Time Match"
+        
+        # TIER 2: Try time-only matching as fallback
+        print("⏰ Field matching failed, trying time-only matching...")
+        panel_result = self._try_time_only_match(student, judges, supervisor_judges)
+        if panel_result:
+            print("✅ Successfully matched time schedule (ignoring field expertise)")
+            return panel_result, "Time Match Only"
+        
+        print("❌ Failed to find any suitable panel configuration")
+        return None
+    
+    def _try_field_and_time_match(self, student: Student, judges: List[Judge], 
+                                 supervisor_judges: List[Judge]) -> Optional[PanelConfiguration]:
+        """
+        Try to create a panel with both field expertise and time matching.
+        
+        Args:
+            student: Student requiring scheduling
+            judges: List of all available judges
+            supervisor_judges: List of supervisor judges
+            
+        Returns:
+            PanelConfiguration if successful, None otherwise
+        """
         # Find expertise matches (excluding supervisors)
         expertise_matches = self.find_expertise_matches(student, judges, supervisor_judges)
         
-        # Select exactly 2 examiner judges
+        # Select exactly 2 examiner judges based on expertise
         constraints = self.config.scheduling_constraints
         required_judges_count = constraints['required_judges']
         
@@ -256,17 +298,19 @@ class SchedulingEngine:
             required_judges_count
         )
         
-        # Use selected examiners directly (they're already Judge objects)
         examiner_judges = selected_examiners
+        print(f"✓ Found {len(supervisor_judges)} supervisors, {len(examiner_judges)} examiners with field expertise")
         
-        print(f"✓ Found {len(supervisor_judges)} supervisors, {len(examiner_judges)} examiners")
+        if len(examiner_judges) < required_judges_count:
+            print(f"⚠ Insufficient examiners with field expertise ({len(examiner_judges)}/{required_judges_count})")
+            return None
         
         # Find available time slots for all required judges
         all_required_judges = supervisor_judges + examiner_judges
         available_slots = self.find_available_time_slots(all_required_judges)
         
         if not available_slots:
-            print("✗ No available time slots found")
+            print("✗ No available time slots found for field-matched judges")
             return None
         
         # Create panel configuration with first available slot
@@ -277,6 +321,79 @@ class SchedulingEngine:
         )
         
         return panel
+    
+    def _try_time_only_match(self, student: Student, judges: List[Judge], 
+                           supervisor_judges: List[Judge]) -> Optional[PanelConfiguration]:
+        """
+        Try to create a panel with time matching only (ignoring field expertise).
+        Prioritizes judges with lower workload for better distribution.
+        
+        Args:
+            student: Student requiring scheduling
+            judges: List of all available judges
+            supervisor_judges: List of supervisor judges
+            
+        Returns:
+            PanelConfiguration if successful, None otherwise
+        """
+        # Get all non-supervisor judges (ignore expertise for now)
+        supervisor_codes = [judge.code for judge in supervisor_judges]
+        available_examiners = [judge for judge in judges if judge.code not in supervisor_codes]
+        
+        # Sort available examiners by workload (ascending - least loaded first)
+        available_examiners = sorted(available_examiners, 
+                                   key=lambda j: self.session.get_judge_workload(j.code))
+        
+        constraints = self.config.scheduling_constraints
+        required_judges_count = constraints['required_judges']
+        
+        if len(available_examiners) < required_judges_count:
+            print(f"⚠ Insufficient total examiners ({len(available_examiners)}/{required_judges_count})")
+            return None
+        
+        # Try combinations starting with least loaded judges
+        # Use a smarter approach: try combinations prioritizing low workload judges
+        best_combo = None
+        best_time_slot = None
+        best_workload_sum = float('inf')
+        
+        for examiner_combo in combinations(available_examiners, required_judges_count):
+            examiner_judges = list(examiner_combo)
+            all_required_judges = supervisor_judges + examiner_judges
+            available_slots = self.find_available_time_slots(all_required_judges)
+            
+            if available_slots:
+                # Calculate total workload for this combination
+                combo_workload = sum(self.session.get_judge_workload(judge.code) for judge in examiner_judges)
+                
+                if combo_workload < best_workload_sum:
+                    best_combo = examiner_judges
+                    best_time_slot = available_slots[0]
+                    best_workload_sum = combo_workload
+                    
+                    # Log the workload information
+                    workload_info = [f"{judge.code}({self.session.get_judge_workload(judge.code)})" for judge in examiner_judges]
+                    print(f"🔹 Found better combo with total workload {combo_workload}: {' + '.join(workload_info)}")
+                    
+                    # If we found a combination with very low workload, use it immediately
+                    if combo_workload <= required_judges_count:  # Very low workload
+                        break
+        
+        if best_combo and best_time_slot:
+            workload_info = [f"{judge.code}({self.session.get_judge_workload(judge.code)})" for judge in best_combo]
+            print(f"✓ Selected best workload combo: {' + '.join(workload_info)} (total: {best_workload_sum})")
+            print(f"✓ Found {len(supervisor_judges)} supervisors, {len(best_combo)} examiners (time-only match)")
+            
+            # Create panel configuration with the best combination
+            panel = PanelConfiguration(
+                supervisors=supervisor_judges,
+                examiners=best_combo,
+                time_slot=best_time_slot
+            )
+            return panel
+        
+        print("✗ No available time slots found for any examiner combination")
+        return None
     
     def schedule_student(self, student: Student, judges: List[Judge]) -> ScheduleResult:
         """
@@ -289,44 +406,50 @@ class SchedulingEngine:
         Returns:
             ScheduleResult with scheduling outcome
         """
-        panel = self.create_panel_configuration(student, judges)
+        panel_result = self.create_panel_configuration(student, judges)
         
-        if panel and panel.is_valid():
-            # Reserve the time slot
-            self.session.reserve_time_slot(panel.time_slot, panel.get_all_judge_codes())
+        if panel_result:
+            panel, status = panel_result
             
-            # Create result with exactly 2 examiner recommendations
-            examiner_codes = [judge.code for judge in panel.examiners]
-            
-            # Ensure exactly 2 judges (fill with NONE if needed)
-            recommendations = []
-            recommendations.append(examiner_codes[0] if len(examiner_codes) > 0 else "NONE")
-            recommendations.append(examiner_codes[1] if len(examiner_codes) > 1 else "NONE")
-            
-            result = ScheduleResult(
-                student=student,
-                scheduled=True,
-                time_slot=self.time_formatter.format_time_slot(panel.time_slot),
-                panel_judges=panel.get_all_judge_codes(),
-                recommended_judges=recommendations,
-                reason="Successfully scheduled"
-            )
-            
-            print(f"✓ Scheduled at {result.time_slot}")
-            print(f"✓ Panel: {', '.join(panel.get_all_judge_codes())}")
-            print(f"✓ Recommendations: {' | '.join(recommendations)}")
-            
-        else:
-            # Failed to schedule
-            result = ScheduleResult(
-                student=student,
-                scheduled=False,
-                recommended_judges=["NONE", "NONE"],
-                reason="No available time slot or insufficient judges"
-            )
-            
-            print(f"✗ Failed to schedule: {result.reason}")
+            if panel and panel.is_valid() and panel.time_slot:
+                # Reserve the time slot
+                self.session.reserve_time_slot(panel.time_slot, panel.get_all_judge_codes())
+                
+                # Create result with exactly 2 examiner recommendations
+                examiner_codes = [judge.code for judge in panel.examiners]
+                
+                # Ensure exactly 2 judges (fill with NONE if needed)
+                recommendations = []
+                recommendations.append(examiner_codes[0] if len(examiner_codes) > 0 else "NONE")
+                recommendations.append(examiner_codes[1] if len(examiner_codes) > 1 else "NONE")
+                
+                result = ScheduleResult(
+                    student=student,
+                    scheduled=True,
+                    time_slot=self.time_formatter.format_time_slot(panel.time_slot),
+                    panel_judges=panel.get_all_judge_codes(),
+                    recommended_judges=recommendations,
+                    reason="Successfully scheduled",
+                    status=status
+                )
+                
+                print(f"✓ Scheduled at {result.time_slot}")
+                print(f"✓ Panel: {', '.join(panel.get_all_judge_codes())}")
+                print(f"✓ Recommendations: {' | '.join(recommendations)}")
+                print(f"✓ Status: {status}")
+                
+                return result
         
+        # Failed to schedule
+        result = ScheduleResult(
+            student=student,
+            scheduled=False,
+            recommended_judges=["NONE", "NONE"],
+            reason="No available time slot or insufficient judges",
+            status="Not Scheduled"
+        )
+        
+        print(f"✗ Failed to schedule: {result.reason}")
         return result
     
     def schedule_all_students(self, students: List[Student], judges: List[Judge]) -> List[ScheduleResult]:
@@ -358,5 +481,7 @@ class SchedulingEngine:
             'total_students': len(self.session.processed_students),
             'scheduled_count': sum(1 for r in self.session.results if r.scheduled),
             'failed_count': sum(1 for r in self.session.results if not r.scheduled),
-            'time_slot_utilization': self.session.get_utilization_summary()
+            'time_slot_utilization': self.session.get_utilization_summary(),
+            'judge_workload': self.session.get_workload_summary(),
+            'parallel_defenses': self.session.get_parallel_defenses_summary()
         }

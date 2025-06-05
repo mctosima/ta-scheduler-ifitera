@@ -65,6 +65,7 @@ class ScheduleResult:
     panel_judges: List[str] = field(default_factory=list)
     recommended_judges: List[str] = field(default_factory=list)
     reason: Optional[str] = None
+    status: Optional[str] = None  # "Field and Time Match" or "Time Match Only"
     
     def get_formatted_time(self) -> str:
         """Get formatted time slot string."""
@@ -119,25 +120,50 @@ class PanelConfiguration:
 
 @dataclass
 class SchedulingSession:
-    """Represents a scheduling session with conflict tracking."""
+    """Represents a scheduling session with conflict tracking and workload balancing."""
     
     scheduled_slots: Dict[str, List[str]] = field(default_factory=dict)
     processed_students: List[Student] = field(default_factory=list)
     results: List[ScheduleResult] = field(default_factory=list)
+    judge_workload: Dict[str, int] = field(default_factory=dict)  # Track assignment count per judge
+    parallel_defenses_count: Dict[str, int] = field(default_factory=dict)  # Track parallel defenses per time slot
     
     def reserve_time_slot(self, time_slot: str, judge_codes: List[str]):
         """Reserve a time slot for specific judges."""
         if time_slot not in self.scheduled_slots:
             self.scheduled_slots[time_slot] = []
+            self.parallel_defenses_count[time_slot] = 0
         
         for code in judge_codes:
             if code not in self.scheduled_slots[time_slot]:
                 self.scheduled_slots[time_slot].append(code)
+                # Update workload tracking
+                self.judge_workload[code] = self.judge_workload.get(code, 0) + 1
+        
+        # Increment parallel defense count
+        self.parallel_defenses_count[time_slot] += 1
     
     def is_judge_available(self, judge_code: str, time_slot: str) -> bool:
         """Check if judge is available at time slot (not already scheduled)."""
         return (time_slot not in self.scheduled_slots or 
                 judge_code not in self.scheduled_slots[time_slot])
+    
+    def can_schedule_parallel_defense(self, time_slot: str, max_parallel: int) -> bool:
+        """Check if we can schedule another parallel defense in this time slot."""
+        current_count = self.parallel_defenses_count.get(time_slot, 0)
+        return current_count < max_parallel
+    
+    def get_judge_workload(self, judge_code: str) -> int:
+        """Get the current workload (assignment count) for a judge."""
+        return self.judge_workload.get(judge_code, 0)
+    
+    def get_workload_summary(self) -> Dict[str, int]:
+        """Get summary of judge workload distribution."""
+        return dict(self.judge_workload)
+    
+    def get_parallel_defenses_summary(self) -> Dict[str, int]:
+        """Get summary of parallel defenses per time slot."""
+        return dict(self.parallel_defenses_count)
     
     def get_utilization_summary(self) -> Dict[str, List[str]]:
         """Get summary of time slot utilization."""
@@ -190,10 +216,12 @@ class DataLoader:
                     original_row['Tanggal dan Waktu (Format: YYYYMMDD-HHMM)'] = result.get_formatted_time()
                     original_row['Penguji 1'] = result.get_penguji_1()
                     original_row['Penguji 2'] = result.get_penguji_2()
+                    original_row['Status'] = result.status or "Unknown"
                 else:
                     original_row['Tanggal dan Waktu (Format: YYYYMMDD-HHMM)'] = f"NOT_SCHEDULED: {result.reason}"
                     original_row['Penguji 1'] = result.get_penguji_1()
                     original_row['Penguji 2'] = result.get_penguji_2()
+                    original_row['Status'] = "Not Scheduled"
                 
                 updated_rows.append(original_row)
             

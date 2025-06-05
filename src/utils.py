@@ -124,35 +124,51 @@ class TimeFormatter:
         Returns:
             Formatted time string
         """
-        # Extract date and time from column name
+        # Handle the new cleaned format: "Tuesday_10_June_2025_08:00"
         parts = time_slot.split('_')
         if len(parts) >= 5:
-            day = parts[0]
+            # parts[0] = weekday (Tuesday)
+            # parts[1] = date (10)
+            # parts[2] = month (June)
+            # parts[3] = year (2025)
+            # parts[4] = time (08:00)
+            
             date = parts[1]
             month = parts[2]
             year = parts[3]
             time = parts[4]
             
-            # Get month mapping from config
-            month_map = self.config.time_format['month_mapping']
+            # Define month mapping directly here for now
+            month_map = {
+                'January': '01', 'February': '02', 'March': '03', 'April': '04',
+                'May': '05', 'June': '06', 'July': '07', 'August': '08',
+                'September': '09', 'October': '10', 'November': '11', 'December': '12'
+            }
             month_num = month_map.get(month, '01')
             date_padded = date.zfill(2)
             time_formatted = time.replace(':', '')
             
             return f"{year}{month_num}{date_padded}-{time_formatted}"
+        
+        # Fallback: if the format doesn't match expected pattern, return as-is
         return time_slot
 
 
 class JudgeSelector:
-    """Handles judge selection logic."""
+    """Handles judge selection logic with workload balancing."""
     
     def __init__(self, config: Config):
         self.config = config
+        self.session = None  # Will be set by SchedulingEngine
+    
+    def set_session(self, session):
+        """Set the scheduling session for workload tracking."""
+        self.session = session
     
     def select_judges_by_expertise(self, available_judges, 
                                  field1: str, field2: str, max_judges: int = 2):
         """
-        Select judges based on expertise matching with priority system.
+        Select judges based on expertise matching with priority system and workload balancing.
         
         Args:
             available_judges: List of available Judge objects or dictionaries
@@ -197,29 +213,58 @@ class JudgeSelector:
                 else:
                     other_judges.append(judge)
         
-        # Select judges with priority
-        selected_judges = []
+        # Sort each category by workload (ascending - least loaded first)
+        if self.session:
+            field1_matches = self._sort_by_workload(field1_matches)
+            field2_matches = self._sort_by_workload(field2_matches)
+            other_judges = self._sort_by_workload(other_judges)
         
-        # Priority 1: Field 1 matches
+        # Select judges with priority
+        selected_judges: List[Any] = []
+        
+        # Priority 1: Field 1 matches (least loaded first)
         if field1_matches and len(selected_judges) < max_judges:
             selected_judges.append(field1_matches[0])
+            if self.session:
+                print(f"🔹 Selected {self._get_judge_code(field1_matches[0])} for field1 '{field1}' (workload: {self.session.get_judge_workload(self._get_judge_code(field1_matches[0]))})")
         
-        # Priority 2: Field 2 matches (different from field 1 match)
+        # Priority 2: Field 2 matches (different from field 1 match, least loaded first)
         if field2_matches and len(selected_judges) < max_judges:
             for judge in field2_matches:
                 if judge not in selected_judges:
                     selected_judges.append(judge)
+                    if self.session:
+                        print(f"🔹 Selected {self._get_judge_code(judge)} for field2 '{field2}' (workload: {self.session.get_judge_workload(self._get_judge_code(judge))})")
                     break
         
-        # Priority 3: Fill remaining slots with any available judges
+        # Priority 3: Fill remaining slots with any available judges (least loaded first)
         if len(selected_judges) < max_judges:
             remaining_judges = [j for j in available_judges if j not in selected_judges]
+            remaining_judges = self._sort_by_workload(remaining_judges) if self.session else remaining_judges
+            
             for judge in remaining_judges:
                 if len(selected_judges) >= max_judges:
                     break
                 selected_judges.append(judge)
+                if self.session:
+                    print(f"🔹 Selected {self._get_judge_code(judge)} as fallback (workload: {self.session.get_judge_workload(self._get_judge_code(judge))})")
         
         return selected_judges
+    
+    def _sort_by_workload(self, judges):
+        """Sort judges by current workload (ascending - least loaded first)."""
+        if not self.session:
+            return judges
+        
+        return sorted(judges, key=lambda j: self.session.get_judge_workload(self._get_judge_code(j)))
+    
+    def _get_judge_code(self, judge):
+        """Get judge code from either Judge object or dictionary."""
+        if hasattr(judge, 'code'):
+            return judge.code
+        else:
+            # Handle dictionary format
+            return judge.get('code', judge.get('Sub_Keilmuan', 'Unknown'))
 
 
 class ValidationHelper:
@@ -273,13 +318,16 @@ class ReportGenerator:
     def __init__(self, config: Config):
         self.config = config
     
-    def generate_scheduling_summary(self, results: List, scheduled_slots: Dict[str, List[str]]) -> str:
+    def generate_scheduling_summary(self, results: List, scheduled_slots: Dict[str, List[str]], 
+                                  judge_workload: Optional[Dict[str, int]] = None,
+                                  parallel_defenses: Optional[Dict[str, int]] = None) -> str:
         """
         Generate a comprehensive scheduling summary.
         
         Args:
             results: List of scheduling results
             scheduled_slots: Dictionary of scheduled time slots
+            judge_workload: Dictionary of judge workload counts (optional)
             
         Returns:
             Formatted summary string
@@ -297,6 +345,18 @@ class ReportGenerator:
         summary.append(f"Failed to schedule: {failed_count}")
         summary.append(f"Success rate: {(scheduled_count/total_count*100):.1f}%")
         
+        # Add status breakdown if available
+        if results and any(r.get('status') for r in results):
+            status_counts: Dict[str, int] = {}
+            for result in results:
+                status = result.get('status', 'Unknown')
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            summary.append("\n📊 SCHEDULING STATUS BREAKDOWN:")
+            for status, count in status_counts.items():
+                percentage = (count/total_count*100)
+                summary.append(f"   • {status}: {count} students ({percentage:.1f}%)")
+        
         if scheduled_count > 0:
             summary.append("\n🗓️  SCHEDULED DEFENSES:")
             for result in results:
@@ -304,7 +364,8 @@ class ReportGenerator:
                     name = result.get('student_name', 'Unknown')
                     time_slot = result.get('recommended_times', ['Unknown'])[0]
                     judges = ' | '.join(result.get('recommended_judges', ['NONE', 'NONE']))
-                    summary.append(f"   • {name} - {time_slot} - Judges: {judges}")
+                    status = result.get('status', '')
+                    summary.append(f"   • {name} - {time_slot} - Judges: {judges} - {status}")
         
         if failed_count > 0:
             summary.append("\n❌ FAILED TO SCHEDULE:")
@@ -321,5 +382,24 @@ class ReportGenerator:
             for time_slot, judges in scheduled_slots.items():
                 formatted_time = time_formatter.format_time_slot(time_slot)
                 summary.append(f"   • {formatted_time}: {' | '.join(judges)}")
+        
+        # Add workload balancing summary
+        if judge_workload:
+            summary.append("\n⚖️  JUDGE WORKLOAD DISTRIBUTION:")
+            # Sort judges by workload (descending)
+            sorted_workload = sorted(judge_workload.items(), key=lambda x: x[1], reverse=True)
+            
+            total_assignments = sum(judge_workload.values())
+            avg_workload = total_assignments / len(judge_workload) if judge_workload else 0
+            
+            summary.append(f"   Total assignments: {total_assignments}")
+            summary.append(f"   Average per judge: {avg_workload:.1f}")
+            summary.append("   Individual workloads:")
+            
+            for judge_code, count in sorted_workload:
+                if count > 0:  # Only show judges with assignments
+                    deviation = count - avg_workload
+                    indicator = "🔴" if deviation > 1 else "🟡" if deviation > 0 else "🟢"
+                    summary.append(f"     {indicator} {judge_code}: {count} assignments")
         
         return "\n".join(summary)
