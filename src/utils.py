@@ -65,9 +65,14 @@ class DataProcessor:
             return supervisor_name.upper()
         
         # Try to match with judge names to get their code
+        name_col = self.config.column_mappings['availability']['name']
+        expertise_col = self.config.column_mappings['availability']['expertise']
         for _, judge in availability_df.iterrows():
-            if supervisor_name.lower() in judge['Nama_Dosen'].lower():
-                return self.get_judge_code(judge['Sub_Keilmuan'])
+            # Check if both supervisor_name and judge name are not null/NaN
+            judge_name = judge[name_col]
+            if (pd.notna(supervisor_name) and pd.notna(judge_name) and 
+                str(supervisor_name).lower() in str(judge_name).lower()):
+                return self.get_judge_code(judge[expertise_col])
         
         return supervisor_name.upper()
     
@@ -239,21 +244,24 @@ class ValidationHelper:
         return True
     
     @staticmethod
-    def validate_student_data(row: Dict[str, Any]) -> bool:
+    def validate_student_data(row: Dict[str, Any], required_fields: Optional[List[str]] = None) -> bool:
         """
         Validate student request data.
         
         Args:
             row: Dictionary containing student data
+            required_fields: List of required field names (defaults to hardcoded values for backward compatibility)
             
         Returns:
             True if valid, False otherwise
         """
-        required_fields = ['Nama', 'Nim', 'Field 1', 'Field 2', 'SPV 1']
+        if required_fields is None:
+            required_fields = ['Nama', 'Nim', 'Field 1', 'Field 2', 'SPV 1']
         
         for field in required_fields:
             if not row.get(field) or pd.isna(row.get(field)):
-                print(f"Missing required field: {field} for student {row.get('Nama', 'Unknown')}")
+                student_name = row.get(required_fields[0] if required_fields else 'Nama', 'Unknown')
+                print(f"Missing required field: {field} for student {student_name}")
                 return False
         
         return True

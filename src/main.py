@@ -141,19 +141,37 @@ class ThesisSchedulerApp:
     def _validate_input_data(self, availability_df, request_df):
         """Validate input data structure."""
         # Validate availability data
-        required_avail_cols = ['Nama_Dosen', 'Sub_Keilmuan']
+        required_avail_cols = [
+            self.config.column_mappings['availability']['name'],
+            self.config.column_mappings['availability']['expertise']
+        ]
         if not ValidationHelper.validate_csv_structure(availability_df, required_avail_cols):
             raise ValueError("Invalid availability data structure")
         
         # Validate request data
-        required_request_cols = ['Nama', 'Nim', 'Field 1', 'Field 2', 'SPV 1']
+        # Use the first option from the config lists for validation
+        required_request_cols = [
+            self.config.column_mappings['request']['student_name'][0],
+            self.config.column_mappings['request']['student_id'][0],
+            self.config.column_mappings['request']['field1'][0],
+            self.config.column_mappings['request']['field2'][0],
+            self.config.column_mappings['request']['supervisor1'][0]
+        ]
         if not ValidationHelper.validate_csv_structure(request_df, required_request_cols):
             raise ValueError("Invalid request data structure")
         
         # Validate individual student records
+        student_required_fields = [
+            self.config.column_mappings['request']['student_name'][0],
+            self.config.column_mappings['request']['student_id'][0],
+            self.config.column_mappings['request']['field1'][0],
+            self.config.column_mappings['request']['field2'][0],
+            self.config.column_mappings['request']['supervisor1'][0]
+        ]
         for _, row in request_df.iterrows():
-            if not ValidationHelper.validate_student_data(row.to_dict()):
-                raise ValueError(f"Invalid student data for {row.get('Nama', 'Unknown')}")
+            if not ValidationHelper.validate_student_data(row.to_dict(), student_required_fields):
+                student_name = row.get(student_required_fields[0], 'Unknown')
+                raise ValueError(f"Invalid student data for {student_name}")
     
     def _result_to_dict(self, result: ScheduleResult) -> Dict[str, Any]:
         """Convert ScheduleResult to dictionary for reporting."""

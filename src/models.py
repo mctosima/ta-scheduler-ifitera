@@ -187,11 +187,11 @@ class DataLoader:
                 
                 # Update with scheduling results
                 if result.scheduled:
-                    original_row['Date Time (YYYYMMDD-HHMM)'] = result.get_formatted_time()
+                    original_row['Tanggal dan Waktu (Format: YYYYMMDD-HHMM)'] = result.get_formatted_time()
                     original_row['Penguji 1'] = result.get_penguji_1()
                     original_row['Penguji 2'] = result.get_penguji_2()
                 else:
-                    original_row['Date Time (YYYYMMDD-HHMM)'] = f"NOT_SCHEDULED: {result.reason}"
+                    original_row['Tanggal dan Waktu (Format: YYYYMMDD-HHMM)'] = f"NOT_SCHEDULED: {result.reason}"
                     original_row['Penguji 1'] = result.get_penguji_1()
                     original_row['Penguji 2'] = result.get_penguji_2()
                 

@@ -37,11 +37,16 @@ class SchedulingEngine:
         time_cols = self.data_processor.get_time_slot_columns(availability_df)
         
         for _, row in availability_df.iterrows():
-            # Parse judge information
-            name = row['Nama_Dosen']
-            expertise_str = row.get('Sub_Keilmuan', '')
+            # Parse judge information using config column names
+            name_col = self.config.column_mappings['availability']['name']
+            expertise_col = self.config.column_mappings['availability']['expertise']
+            
+            name = row[name_col]
+            expertise_str = row.get(expertise_col, '')
             expertise_codes = self.data_processor.parse_expertise_codes(expertise_str)
-            judge_code = self.data_processor.get_judge_code(expertise_str)
+            
+            # Get judge code from column 2 (index 1) instead of deriving from expertise
+            judge_code = str(row.iloc[1]) if len(row) > 1 and pd.notna(row.iloc[1]) else ""
             
             # Parse availability
             availability = {}
@@ -70,18 +75,50 @@ class SchedulingEngine:
         """
         students = []
         
+        # Get column mappings from config
+        student_name_cols = self.config.column_mappings['request']['student_name']
+        student_id_cols = self.config.column_mappings['request']['student_id']
+        field1_cols = self.config.column_mappings['request']['field1']
+        field2_cols = self.config.column_mappings['request']['field2']
+        supervisor1_cols = self.config.column_mappings['request']['supervisor1']
+        supervisor2_cols = self.config.column_mappings['request']['supervisor2']
+        
         for _, row in request_df.iterrows():
+            # Find the first available column for each field
+            name = self._get_first_available_value(row, student_name_cols)
+            student_id = self._get_first_available_value(row, student_id_cols)
+            field1 = self._get_first_available_value(row, field1_cols)
+            field2 = self._get_first_available_value(row, field2_cols)
+            supervisor1 = self._get_first_available_value(row, supervisor1_cols)
+            supervisor2 = self._get_first_available_value(row, supervisor2_cols)
+            
             student = Student(
-                name=row.get('Nama', ''),
-                student_id=row.get('Nim', ''),
-                field1=row.get('Field 1', ''),
-                field2=row.get('Field 2', ''),
-                supervisor1=row.get('SPV 1', ''),
-                supervisor2=row.get('SPV 2', '')
+                name=name or '',
+                student_id=student_id or '',
+                field1=field1 or '',
+                field2=field2 or '',
+                supervisor1=supervisor1 or '',
+                supervisor2=supervisor2 or ''
             )
             students.append(student)
         
         return students
+    
+    def _get_first_available_value(self, row: pd.Series, column_names: List[str]) -> Optional[str]:
+        """
+        Get the first non-null value from a list of possible column names.
+        
+        Args:
+            row: Pandas Series representing a row of data
+            column_names: List of column names to check
+            
+        Returns:
+            First non-null value found, or None if all are null
+        """
+        for col_name in column_names:
+            if col_name in row and pd.notna(row[col_name]):
+                return str(row[col_name])
+        return None
     
     def find_supervisor_judges(self, student: Student, judges: List[Judge]) -> List[Judge]:
         """
@@ -106,9 +143,14 @@ class SchedulingEngine:
             # Find matching judge
             for judge in judges:
                 # Check by code, expertise, or name match
+                # Ensure supervisor_name and judge.name are not null before string operations
+                supervisor_name_str = str(supervisor_name) if pd.notna(supervisor_name) else ""
+                judge_name_str = str(judge.name) if pd.notna(judge.name) else ""
+                
                 if (supervisor_code in judge.expertise or 
-                    supervisor_name.lower() in judge.name.lower() or
-                    supervisor_code.upper() == judge.name.upper() or
+                    (supervisor_name_str and judge_name_str and 
+                     supervisor_name_str.lower() in judge_name_str.lower()) or
+                    supervisor_code.upper() == judge_name_str.upper() or
                     supervisor_code.upper() == judge.code.upper()):
                     if judge not in supervisor_judges:
                         supervisor_judges.append(judge)

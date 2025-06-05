@@ -9,13 +9,14 @@ constraints, and system parameters.
 import os
 import configparser
 from pathlib import Path
+from typing import Dict, Any, Optional
 from typing import Dict, List
 
 
 class Config:
     """Configuration class for the thesis scheduler."""
     
-    def __init__(self, base_dir: str = None, config_file: str = None):
+    def __init__(self, base_dir: Optional[str] = None, config_file: Optional[str] = None):
         """
         Initialize configuration with dynamic path resolution.
         
@@ -56,51 +57,51 @@ class Config:
     
     @property
     def default_files(self) -> Dict[str, str]:
-        """Get default file names."""
+        """Get default file names from config file or use defaults."""
         return {
-            'availability': 'avail_20250610_clean.csv',
-            'single_request': 'schedule_request.csv',
-            'multiple_requests': 'schedule_request_multiple.csv',
-            'output_suffix': '_with_recommendations.csv'
+            'availability': self.config.get('FILES', 'availability_file', fallback='avail_20250610_clean.csv'),
+            'single_request': self.config.get('FILES', 'single_request_file', fallback='schedule_request.csv'),
+            'multiple_requests': self.config.get('FILES', 'multiple_request_file', fallback='schedule_request_multiple.csv'),
+            'output_suffix': self.config.get('FILES', 'output_suffix', fallback='_with_recommendations.csv')
         }
     
     @property
     def scheduling_constraints(self) -> Dict[str, int]:
-        """Get scheduling constraints."""
+        """Get scheduling constraints from config file or use defaults."""
         return {
-            'required_judges': 2,  # Exactly 2 judges required
-            'max_panel_size': 5,   # Maximum panel size including supervisors
-            'max_recommendations': 5  # Maximum time slot recommendations
+            'required_judges': self.config.getint('SCHEDULING', 'required_judges', fallback=2),
+            'max_panel_size': self.config.getint('SCHEDULING', 'max_panel_size', fallback=5),
+            'max_recommendations': self.config.getint('SCHEDULING', 'max_recommendations', fallback=5)
         }
     
     @property
-    def column_mappings(self) -> Dict[str, List[str]]:
-        """Get column name mappings for CSV files."""
+    def column_mappings(self) -> Dict[str, Dict[str, Any]]:
+        """Get column name mappings for CSV files from config file or use defaults."""
         return {
             'availability': {
-                'name': 'Nama_Dosen',
-                'expertise': 'Sub_Keilmuan',
-                'excluded': ['Nama_Dosen', 'Unknown_Col_5', 'Sub_Keilmuan']
+                'name': self.config.get('COLUMNS', 'availability_name_col', fallback='Nama_Dosen'),
+                'expertise': self.config.get('COLUMNS', 'availability_expertise_col', fallback='Sub_Keilmuan'),
+                'excluded': self.config.get('COLUMNS', 'availability_excluded_cols', fallback='Nama_Dosen,Unknown_Col_5,Sub_Keilmuan').split(',')
             },
             'request': {
-                'student_name': ['Nama', 'nama'],
-                'student_id': ['Nim', 'nim'],
-                'field1': ['Field 1', 'field1'],
-                'field2': ['Field 2', 'field2'],
-                'supervisor1': ['SPV 1', 'spv1'],
-                'supervisor2': ['SPV 2', 'spv2']
+                'student_name': self.config.get('COLUMNS', 'request_student_name_cols', fallback='Nama,nama').split(','),
+                'student_id': self.config.get('COLUMNS', 'request_student_id_cols', fallback='Nim,nim').split(','),
+                'field1': self.config.get('COLUMNS', 'request_field1_cols', fallback='Field 1,field1').split(','),
+                'field2': self.config.get('COLUMNS', 'request_field2_cols', fallback='Field 2,field2').split(','),
+                'supervisor1': self.config.get('COLUMNS', 'request_supervisor1_cols', fallback='SPV 1,spv1').split(','),
+                'supervisor2': self.config.get('COLUMNS', 'request_supervisor2_cols', fallback='SPV 2,spv2').split(',')
             },
             'output': {
-                'datetime': 'Date Time (YYYYMMDD-HHMM)',
+                'datetime': self.config.get('COLUMNS', 'output_datetime_col', fallback='Date Time (YYYYMMDD-HHMM)'),
                 'recommendations': 'List of recommendation'
             }
         }
     
     @property
     def time_format(self) -> Dict[str, str]:
-        """Get time formatting configuration."""
+        """Get time formatting configuration from config file or use defaults."""
         return {
-            'output_format': '%Y%m%d-%H%M',
+            'output_format': self.config.get('TIME_FORMAT', 'output_format', fallback='%Y%m%d-%H%M'),
             'month_mapping': {
                 'January': '01', 'February': '02', 'March': '03', 'April': '04',
                 'May': '05', 'June': '06', 'July': '07', 'August': '08',
