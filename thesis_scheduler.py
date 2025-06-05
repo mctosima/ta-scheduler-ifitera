@@ -14,7 +14,6 @@ import pandas as pd
 import numpy as np
 from datetime import datetime
 from typing import List, Dict, Tuple
-import configparser
 import re
 
 class ThesisScheduler:
@@ -694,17 +693,10 @@ class ThesisScheduler:
 
 def main():
     """Main function to run the thesis scheduler."""
-    config = configparser.ConfigParser()
-    config.read('config.ini')
-    
-    # get input and output file paths from config
-    try:
-        availability_file = config["input"]["source"].strip('"')
-        request_file = config["input"]["target"].strip('"')
-        output_file = config["output"]["destination"].strip('"')
-    except KeyError as e:
-        print(f"Error: Missing configuration key {e}. Please check your config.ini file.")
-        return
+    # File paths
+    availability_file = "/Users/martinmanullang/Developer/ta-scheduler/avail_20250610_clean.csv"
+    request_file = "/Users/martinmanullang/Developer/ta-scheduler/schedule_request_multiple.csv"
+    output_file = "/Users/martinmanullang/Developer/ta-scheduler/schedule_request_multiple_with_recommendations.csv"
     
     # Initialize scheduler
     scheduler = ThesisScheduler(availability_file, request_file)
