@@ -39,11 +39,22 @@ class Student:
     field2: str
     supervisor1: str
     supervisor2: Optional[str] = None
+    capstone: Optional[str] = None  # Group identifier
     
     def get_required_fields(self) -> List[str]:
         """Get list of required expertise fields."""
         fields = [self.field1.upper(), self.field2.upper()]
         return [f for f in fields if f]
+    
+    def is_group_defense(self) -> bool:
+        """Check if this is a group defense."""
+        return self.capstone is not None and self.capstone.strip() != ""
+    
+    def get_group_id(self) -> str:
+        """Get the group identifier."""
+        if self.capstone and self.capstone.strip():
+            return self.capstone.strip()
+        return ""
     
     def get_supervisors(self) -> List[str]:
         """Get list of supervisors (excluding '-' placeholders)."""
@@ -53,6 +64,40 @@ class Student:
         if self.supervisor2 and self.supervisor2.strip() != "-":
             supervisors.append(self.supervisor2)
         return supervisors
+
+
+@dataclass
+class GroupDefense:
+    """Represents a group defense with multiple students."""
+    
+    group_id: str
+    students: List[Student] = field(default_factory=list)
+    
+    def get_group_size(self) -> int:
+        """Get the number of students in the group."""
+        return len(self.students)
+    
+    def get_primary_student(self) -> Optional[Student]:
+        """Get the first student in the group (for panel configuration)."""
+        return self.students[0] if self.students else None
+    
+    def get_all_supervisors(self) -> List[str]:
+        """Get all unique supervisors from all students in the group."""
+        all_supervisors = []
+        for student in self.students:
+            all_supervisors.extend(student.get_supervisors())
+        return list(set(all_supervisors))  # Remove duplicates
+    
+    def get_combined_fields(self) -> List[str]:
+        """Get all unique fields from all students in the group."""
+        all_fields = []
+        for student in self.students:
+            all_fields.extend(student.get_required_fields())
+        return list(set(all_fields))  # Remove duplicates
+    
+    def get_student_names(self) -> List[str]:
+        """Get list of all student names in the group."""
+        return [student.name for student in self.students]
 
 
 @dataclass

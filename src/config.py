@@ -90,7 +90,8 @@ class Config:
                 'field1': self.config.get('COLUMNS', 'request_field1_cols', fallback='Field 1,field1').split(','),
                 'field2': self.config.get('COLUMNS', 'request_field2_cols', fallback='Field 2,field2').split(','),
                 'supervisor1': self.config.get('COLUMNS', 'request_supervisor1_cols', fallback='SPV 1,spv1').split(','),
-                'supervisor2': self.config.get('COLUMNS', 'request_supervisor2_cols', fallback='SPV 2,spv2').split(',')
+                'supervisor2': self.config.get('COLUMNS', 'request_supervisor2_cols', fallback='SPV 2,spv2').split(','),
+                'capstone': self.config.get('COLUMNS', 'request_capstone_cols', fallback='Capstone,capstone').split(',')
             },
             'output': {
                 'datetime': self.config.get('COLUMNS', 'output_datetime_col', fallback='Date Time (YYYYMMDD-HHMM)'),
@@ -98,6 +99,22 @@ class Config:
             }
         }
     
+    @property
+    def group_defense_config(self) -> Dict[str, int]:
+        """Get group defense time allocation configuration."""
+        return {
+            'group_1': self.config.getint('GROUP_DEFENSE', 'group_1', fallback=1),
+            'group_2': self.config.getint('GROUP_DEFENSE', 'group_2', fallback=2),
+            'group_3': self.config.getint('GROUP_DEFENSE', 'group_3', fallback=2),
+            'group_4': self.config.getint('GROUP_DEFENSE', 'group_4', fallback=3),
+            'default_group_time': self.config.getint('GROUP_DEFENSE', 'default_group_time', fallback=1)
+        }
+    
+    def get_group_time_requirement(self, group_size: int) -> int:
+        """Get time requirement in hours for a specific group size."""
+        group_config = self.group_defense_config
+        return group_config.get(f'group_{group_size}', group_config['default_group_time'])
+
     @property
     def time_format(self) -> Dict[str, str]:
         """Get time formatting configuration from config file or use defaults."""
