@@ -80,6 +80,20 @@ class ScheduleResult:
             return f"{self.recommended_judges[0]} | NONE"
         else:
             return "NONE | NONE"
+    
+    def get_penguji_1(self) -> str:
+        """Get first judge (Penguji 1)."""
+        if len(self.recommended_judges) >= 1:
+            return self.recommended_judges[0]
+        else:
+            return "NONE"
+    
+    def get_penguji_2(self) -> str:
+        """Get second judge (Penguji 2)."""
+        if len(self.recommended_judges) >= 2:
+            return self.recommended_judges[1]
+        else:
+            return "NONE"
 
 
 @dataclass
@@ -174,10 +188,12 @@ class DataLoader:
                 # Update with scheduling results
                 if result.scheduled:
                     original_row['Date Time (YYYYMMDD-HHMM)'] = result.get_formatted_time()
-                    original_row['List of recommendation'] = result.get_recommendations_string()
+                    original_row['Penguji 1'] = result.get_penguji_1()
+                    original_row['Penguji 2'] = result.get_penguji_2()
                 else:
                     original_row['Date Time (YYYYMMDD-HHMM)'] = f"NOT_SCHEDULED: {result.reason}"
-                    original_row['List of recommendation'] = result.get_recommendations_string()
+                    original_row['Penguji 1'] = result.get_penguji_1()
+                    original_row['Penguji 2'] = result.get_penguji_2()
                 
                 updated_rows.append(original_row)
             

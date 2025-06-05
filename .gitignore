@@ -62,5 +62,9 @@ schedule_request_multiple_with_recommendations.csv
 schedule_request_with_recommendations.csv
 schedule_request_multiple.csv
 
+# Configuration files with sensitive data (uncomment if needed)
+# config.ini
+# config.local.ini
+
 # Optional: Uncomment to ignore generated output files
 # output/*.csv

@@ -7,6 +7,7 @@ constraints, and system parameters.
 """
 
 import os
+import configparser
 from pathlib import Path
 from typing import Dict, List
 
@@ -14,14 +15,22 @@ from typing import Dict, List
 class Config:
     """Configuration class for the thesis scheduler."""
     
-    def __init__(self, base_dir: str = None):
+    def __init__(self, base_dir: str = None, config_file: str = None):
         """
         Initialize configuration with dynamic path resolution.
         
         Args:
             base_dir: Base directory for the project. If None, uses current working directory.
+            config_file: Path to config.ini file. If None, uses default location.
         """
         self.base_dir = Path(base_dir) if base_dir else Path.cwd()
+        self.config_file = config_file or str(self.base_dir / "config.ini")
+        self.config = configparser.ConfigParser()
+        
+        # Load configuration from INI file if it exists
+        if os.path.exists(self.config_file):
+            self.config.read(self.config_file)
+        
         self._setup_directories()
     
     def _setup_directories(self):

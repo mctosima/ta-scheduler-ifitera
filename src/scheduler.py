@@ -208,19 +208,14 @@ class SchedulingEngine:
         required_judges_count = constraints['required_judges']
         
         selected_examiners = self.judge_selector.select_judges_by_expertise(
-            [judge.__dict__ for judge in expertise_matches],
+            expertise_matches,
             student.field1,
             student.field2,
             required_judges_count
         )
         
-        # Convert back to Judge objects
-        examiner_judges = []
-        for examiner_dict in selected_examiners:
-            for judge in expertise_matches:
-                if judge.code == self.data_processor.get_judge_code(examiner_dict.get('Sub_Keilmuan', '')):
-                    examiner_judges.append(judge)
-                    break
+        # Use selected examiners directly (they're already Judge objects)
+        examiner_judges = selected_examiners
         
         print(f"✓ Found {len(supervisor_judges)} supervisors, {len(examiner_judges)} examiners")
         

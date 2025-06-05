@@ -144,19 +144,19 @@ class JudgeSelector:
     def __init__(self, config: Config):
         self.config = config
     
-    def select_judges_by_expertise(self, available_judges: List[Dict], 
-                                 field1: str, field2: str, max_judges: int = 2) -> List[Dict]:
+    def select_judges_by_expertise(self, available_judges, 
+                                 field1: str, field2: str, max_judges: int = 2):
         """
         Select judges based on expertise matching with priority system.
         
         Args:
-            available_judges: List of available judge dictionaries
+            available_judges: List of available Judge objects or dictionaries
             field1: First required field
             field2: Second required field
             max_judges: Maximum number of judges to select
             
         Returns:
-            List of selected judges
+            List of selected judges (same type as input)
         """
         if not available_judges:
             return []
@@ -164,24 +164,33 @@ class JudgeSelector:
         field1_upper = field1.upper()
         field2_upper = field2.upper()
         
-        # Create data processor for expertise parsing
-        from .config import Config
-        processor = DataProcessor(Config())
-        
         # Separate judges by expertise match
         field1_matches = []
         field2_matches = []
         other_judges = []
         
         for judge in available_judges:
-            expertise = processor.parse_expertise_codes(judge.get('Sub_Keilmuan', ''))
-            
-            if field1_upper in expertise:
-                field1_matches.append(judge)
-            elif field2_upper in expertise:
-                field2_matches.append(judge)
+            # Handle both Judge objects and dictionaries
+            if hasattr(judge, 'has_expertise_in'):
+                # Judge object
+                if judge.has_expertise_in(field1_upper):
+                    field1_matches.append(judge)
+                elif judge.has_expertise_in(field2_upper):
+                    field2_matches.append(judge)
+                else:
+                    other_judges.append(judge)
             else:
-                other_judges.append(judge)
+                # Dictionary - use existing logic
+                from .config import Config
+                processor = DataProcessor(Config())
+                expertise = processor.parse_expertise_codes(judge.get('Sub_Keilmuan', ''))
+                
+                if field1_upper in expertise:
+                    field1_matches.append(judge)
+                elif field2_upper in expertise:
+                    field2_matches.append(judge)
+                else:
+                    other_judges.append(judge)
         
         # Select judges with priority
         selected_judges = []

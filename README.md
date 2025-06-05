@@ -43,9 +43,10 @@ python main.py -a input/your_availability.csv -r input/your_requests.csv -o outp
 ```
 ta-scheduler/
 ├── main.py                    # Main entry point
+├── config.ini                 # Configuration file for paths and settings
 ├── src/                       # Source code modules
 │   ├── __init__.py
-│   ├── config.py             # Configuration management
+│   ├── config.py             # Configuration management (reads config.ini)
 │   ├── models.py             # Data models and structures
 │   ├── scheduler.py          # Core scheduling engine
 │   ├── utils.py              # Utility functions
@@ -87,7 +88,8 @@ ta-scheduler/
 The system generates CSV files with additional columns:
 
 - `Date Time (YYYYMMDD-HHMM)`: Scheduled time slot or error message
-- `List of recommendation`: Exactly 2 judges in format "JUDGE1 | JUDGE2" or "JUDGE1 | NONE"
+- `Penguji 1`: First recommended judge or "NONE"
+- `Penguji 2`: Second recommended judge or "NONE"
 
 ## Scheduling Algorithm
 
@@ -117,7 +119,30 @@ For each student, the system:
 
 ## Configuration
 
-The system uses dynamic configuration through `src/config.py`:
+The system supports both configuration files and dynamic code configuration:
+
+### Configuration File (`config.ini`)
+
+The system can read settings from a `config.ini` file in the project root:
+
+```ini
+[PATHS]
+input_dir = input
+output_dir = output
+
+[FILES]
+availability_file = avail_20250610_clean.csv
+single_request_file = schedule_request.csv
+multiple_request_file = schedule_request_multiple.csv
+
+[SCHEDULING]
+required_judges = 2
+max_panel_size = 5
+```
+
+### Dynamic Configuration (`src/config.py`)
+
+The system also uses dynamic configuration for runtime flexibility:
 
 - **Paths**: Automatically resolves input/output directories
 - **Constraints**: Configurable number of required judges, panel sizes
