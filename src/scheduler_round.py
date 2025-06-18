@@ -160,6 +160,295 @@ class ThesisScheduler:
         self.dataframes['request'].loc[request_index, 'examiner_2'] = assigned_lecturers.get('examiner_2', '')
         self.dataframes['request'].loc[request_index, 'status'] = 'Field and Time Matching'
     
+    def _find_available_timeslot(self, assigned_lecturers, request_row):
+        """Find available timeslot for assigned lecturers"""
+        # Get all assigned lecturer codes (excluding empty ones)
+        lecturer_codes = [lec for lec in assigned_lecturers.values() if lec and not pd.isna(lec)]
+        
+        if not lecturer_codes:
+            return None
+        
+        # Get timeslot columns from lecturer availability
+        time_columns = [col for col in self.dataframes['lecturer_availability'].columns if col != 'kode_dosen']
+        
+        for time_col in sorted(time_columns):
+            # Check if any lecturer is already assigned to this timeslot
+            lecturer_conflict = False
+            for lecturer_code in lecturer_codes:
+                if lecturer_code in self.lecturer_timeslot_assignments[time_col]:
+                    lecturer_conflict = True
+                    break
+            
+            if lecturer_conflict:
+                continue
+            
+            # Check if all lecturers are available at this time
+            all_available = True
+            for lecturer_code in lecturer_codes:
+                lecturer_row = self.dataframes['lecturer_availability'][
+                    self.dataframes['lecturer_availability']['kode_dosen'] == lecturer_code
+                ]
+                
+                if lecturer_row.empty:
+                    all_available = False
+                    break
+                
+                availability = lecturer_row[time_col].iloc[0]
+                if not (availability == True or availability == 'TRUE' or availability == 'true'):
+                    all_available = False
+                    break
+            
+            if all_available:
+                # Check if enough consecutive slots are available
+                if self._check_consecutive_slots(time_col, lecturer_codes, request_row):
+                    return time_col
+        
+        return None
+    
+    def _check_consecutive_slots(self, start_time_col, lecturer_codes, request_row):
+        """Check if enough consecutive timeslots are available"""
+        capstone_code = request_row.get('capstone_code', '')
+        if pd.notna(capstone_code) and capstone_code != '' and str(capstone_code).strip() != '':
+            group_size = len(self.capstone_groups.get(capstone_code, {}).get('members', []))
+            required_slots = self.capstone_duration.get(str(group_size), self.default_timeslot)
+        else:
+            required_slots = self.default_timeslot
+        
+        # Parse the start time
+        try:
+            date_part, time_part = start_time_col.split('_')
+            start_hour = int(time_part[:2])
+            start_minute = int(time_part[2:])
+        except:
+            return False
+        
+        # Check consecutive slots
+        for slot_offset in range(required_slots):
+            current_minute = start_minute + (slot_offset * 30)
+            current_hour = start_hour + (current_minute // 60)
+            current_minute = current_minute % 60
+            
+            current_time_col = f"{date_part}_{current_hour:02d}{current_minute:02d}"
+            
+            # Check for parallel event capacity
+            try:
+                c_date_part, c_time_part = current_time_col.split('_')
+                formatted_date = f"{c_date_part[:4]}-{c_date_part[4:6]}-{c_date_part[6:8]}"
+                formatted_time = f"{c_time_part[:2]}:{c_time_part[2:]}"
+            except:
+                return False
+
+            mask = (self.dataframes['timeslots']['date'] == formatted_date) & \
+                   (self.dataframes['timeslots']['time'] == formatted_time)
+            
+            matching_rows = self.dataframes['timeslots'][mask]
+            if matching_rows.empty:
+                return False
+
+            row_idx = matching_rows.index[0]
+            slot_columns = [col for col in self.dataframes['timeslots'].columns if col.startswith('slot_')]
+            
+            occupied_slots = 0
+            for slot_col in slot_columns:
+                if self.dataframes['timeslots'].loc[row_idx, slot_col] != 'none':
+                    occupied_slots += 1
+            
+            if occupied_slots >= self.parallel_event:
+                return False
+
+            # Check if this timeslot exists
+            if current_time_col not in self.dataframes['lecturer_availability'].columns:
+                return False
+            
+            # Check if any lecturer is already assigned to this consecutive timeslot
+            for lecturer_code in lecturer_codes:
+                if lecturer_code in self.lecturer_timeslot_assignments[current_time_col]:
+                    return False
+            
+            # Check if all lecturers are available at this consecutive timeslot
+            for lecturer_code in lecturer_codes:
+                lecturer_row = self.dataframes['lecturer_availability'][
+                    self.dataframes['lecturer_availability']['kode_dosen'] == lecturer_code
+                ]
+                
+                if lecturer_row.empty:
+                    return False
+                
+                availability = lecturer_row[current_time_col].iloc[0]
+                if not (availability == True or availability == 'TRUE' or availability == 'true'):
+                    return False
+        
+        return True
+    
+    def _assign_to_timeslot(self, request_row, timeslot, capstone_code):
+        """Assign request to timeslot dataframe for all consecutive slots"""
+        # Convert timeslot format to match timeslots dataframe
+        try:
+            date_part, time_part = timeslot.split('_')
+            formatted_date = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+            start_hour = int(time_part[:2])
+            start_minute = int(time_part[2:])
+        except:
+            return False
+        
+        # Determine the number of slots needed
+        if pd.notna(capstone_code) and capstone_code != '' and str(capstone_code).strip() != '':
+            # For capstone, determine duration based on number of members
+            group_size = len(self.capstone_groups.get(capstone_code, {}).get('members', []))
+            required_slots = self.capstone_duration.get(str(group_size), self.default_timeslot)
+            slot_value = str(capstone_code).strip()
+        else:
+            # For individual requests, use default timeslot
+            required_slots = self.default_timeslot
+            slot_value = str(request_row.get('nim', 'Unknown'))
+        
+        # Fill all consecutive timeslots
+        for slot_offset in range(required_slots):
+            # Calculate current time
+            current_minute = start_minute + (slot_offset * 30)
+            current_hour = start_hour + (current_minute // 60)
+            current_minute = current_minute % 60
+            
+            formatted_time = f"{current_hour:02d}:{current_minute:02d}"
+            
+            # Find matching row in timeslots dataframe
+            mask = (self.dataframes['timeslots']['date'] == formatted_date) & \
+                   (self.dataframes['timeslots']['time'] == formatted_time)
+            
+            matching_rows = self.dataframes['timeslots'][mask]
+            
+            if matching_rows.empty:
+                continue
+            
+            # Find available slot
+            row_idx = matching_rows.index[0]
+            slot_columns = [col for col in self.dataframes['timeslots'].columns if col.startswith('slot_')]
+            
+            for slot_col in slot_columns:
+                if self.dataframes['timeslots'].loc[row_idx, slot_col] == 'none':
+                    self.dataframes['timeslots'].loc[row_idx, slot_col] = slot_value
+                    break
+        
+        # Mark capstone group as assigned if applicable
+        if pd.notna(capstone_code) and capstone_code != '' and str(capstone_code).strip() != '':
+            self.capstone_groups[capstone_code]['assigned_slot'] = timeslot
+        
+        return True
+    
+    def _track_timeslot_usage(self, start_timeslot, assigned_lecturers):
+        """Track timeslot usage for all consecutive slots"""
+        required_slots = self.default_timeslot
+        
+        # Parse the start time
+        try:
+            date_part, time_part = start_timeslot.split('_')
+            start_hour = int(time_part[:2])
+            start_minute = int(time_part[2:])
+        except:
+            return
+        
+        # Track all consecutive slots
+        for slot_offset in range(required_slots):
+            current_minute = start_minute + (slot_offset * 30)
+            current_hour = start_hour + (current_minute // 60)
+            current_minute = current_minute % 60
+            
+            current_time_col = f"{date_part}_{current_hour:02d}{current_minute:02d}"
+            
+            # Track this timeslot as scheduled
+            self.scheduled_timeslots.add(current_time_col)
+            
+            # Track lecturer assignments for this timeslot
+            for lecturer in assigned_lecturers.values():
+                if lecturer and lecturer != '':
+                    self.lecturer_timeslot_assignments[current_time_col].add(lecturer)
+        
+        # Update overall lecturer assignment count (only once per session)
+        for lecturer in assigned_lecturers.values():
+            if lecturer and lecturer != '':
+                self.lecturer_assignments[lecturer] += 1
+    
+    def _find_best_assignment(self, request_row, examiner_pool):
+        """Find the best lecturer assignment and timeslot combination"""
+        # Get timeslot columns from lecturer availability
+        time_columns = [col for col in self.dataframes['lecturer_availability'].columns if col != 'kode_dosen']
+        
+        for time_col in sorted(time_columns):
+            # Try to assign lecturers for this timeslot
+            assigned_lecturers = self._assign_lecturers_for_timeslot(request_row, examiner_pool, time_col)
+            
+            if assigned_lecturers and self._check_consecutive_slots_round2(time_col, assigned_lecturers, request_row):
+                return time_col, assigned_lecturers
+        
+        return None
+    
+    def _is_lecturer_available_at_timeslot(self, lecturer_code, timeslot, request_row):
+        """Check if a lecturer is available at a specific timeslot"""
+        # Get all assigned lecturer codes (excluding empty ones)
+        lecturer_codes = [lec for lec in request_row[['examiner_1', 'examiner_2', 'spv_1', 'spv_2']] if lec and not pd.isna(lec)]
+        
+        if not lecturer_codes:
+            return False
+        
+        try:
+            date_part, time_part = timeslot.split('_')
+            start_hour = int(time_part[:2])
+            start_minute = int(time_part[2:])
+        except:
+            return False
+        
+        capstone_code = request_row.get('capstone_code', '')
+        if pd.notna(capstone_code) and capstone_code != '' and str(capstone_code).strip() != '':
+            group_size = len(self.capstone_groups.get(capstone_code, {}).get('members', []))
+            required_slots = self.capstone_duration.get(str(group_size), self.default_timeslot)
+        else:
+            required_slots = self.default_timeslot
+
+        # Check all consecutive slots
+        for slot_offset in range(required_slots):
+            current_minute = start_minute + (slot_offset * 30)
+            current_hour = start_hour + (current_minute // 60)
+            current_minute = current_minute % 60
+            
+            current_time_col = f"{date_part}_{current_hour:02d}{current_minute:02d}"
+            
+            # Check for parallel event capacity
+            try:
+                c_date_part, c_time_part = current_time_col.split('_')
+                formatted_date = f"{c_date_part[:4]}-{c_date_part[4:6]}-{c_date_part[6:8]}"
+                formatted_time = f"{c_time_part[:2]}:{c_time_part[2:]}"
+            except:
+                return False
+
+            mask = (self.dataframes['timeslots']['date'] == formatted_date) & \
+                   (self.dataframes['timeslots']['time'] == formatted_time)
+            
+            matching_rows = self.dataframes['timeslots'][mask]
+            if matching_rows.empty:
+                return False
+
+            row_idx = matching_rows.index[0]
+            slot_columns = [col for col in self.dataframes['timeslots'].columns if col.startswith('slot_')]
+            
+            occupied_slots = 0
+            for slot_col in slot_columns:
+                if self.dataframes['timeslots'].loc[row_idx, slot_col] != 'none':
+                    occupied_slots += 1
+            
+            if occupied_slots >= self.parallel_event:
+                return False
+
+            # Check timeslot exists
+            if current_time_col not in self.dataframes['lecturer_availability'].columns:
+                return False
+            
+            # Check any lecturer conflicts
+            for lecturer_code in lecturer_codes:
+                if lecturer_code in self.lecturer_timeslot_assignments[current_time_col]:
+                    return False
+        
+        return True
+    
     def _create_examiner_pool(self, request_row):
         """Create pool of eligible examiners based on expertise"""
         field_1 = request_row.get('field_1', '')
@@ -220,11 +509,6 @@ class ThesisScheduler:
         time_columns = [col for col in self.dataframes['lecturer_availability'].columns if col != 'kode_dosen']
         
         for time_col in sorted(time_columns):
-            # Check if timeslot has reached parallel event limit
-            current_parallel_count = len([slot for slot in self.scheduled_timeslots if slot.startswith(time_col)])
-            if current_parallel_count >= self.parallel_event:
-                continue
-            
             # Check if any lecturer is already assigned to this timeslot
             lecturer_conflict = False
             for lecturer_code in lecturer_codes:
@@ -253,14 +537,19 @@ class ThesisScheduler:
             
             if all_available:
                 # Check if enough consecutive slots are available
-                if self._check_consecutive_slots(time_col, lecturer_codes):
+                if self._check_consecutive_slots(time_col, lecturer_codes, request_row):
                     return time_col
         
         return None
     
-    def _check_consecutive_slots(self, start_time_col, lecturer_codes):
+    def _check_consecutive_slots(self, start_time_col, lecturer_codes, request_row):
         """Check if enough consecutive timeslots are available"""
-        required_slots = self.default_timeslot
+        capstone_code = request_row.get('capstone_code', '')
+        if pd.notna(capstone_code) and capstone_code != '' and str(capstone_code).strip() != '':
+            group_size = len(self.capstone_groups.get(capstone_code, {}).get('members', []))
+            required_slots = self.capstone_duration.get(str(group_size), self.default_timeslot)
+        else:
+            required_slots = self.default_timeslot
         
         # Parse the start time
         try:
@@ -278,6 +567,32 @@ class ThesisScheduler:
             
             current_time_col = f"{date_part}_{current_hour:02d}{current_minute:02d}"
             
+            # Check for parallel event capacity
+            try:
+                c_date_part, c_time_part = current_time_col.split('_')
+                formatted_date = f"{c_date_part[:4]}-{c_date_part[4:6]}-{c_date_part[6:8]}"
+                formatted_time = f"{c_time_part[:2]}:{c_time_part[2:]}"
+            except:
+                return False
+
+            mask = (self.dataframes['timeslots']['date'] == formatted_date) & \
+                   (self.dataframes['timeslots']['time'] == formatted_time)
+            
+            matching_rows = self.dataframes['timeslots'][mask]
+            if matching_rows.empty:
+                return False
+
+            row_idx = matching_rows.index[0]
+            slot_columns = [col for col in self.dataframes['timeslots'].columns if col.startswith('slot_')]
+            
+            occupied_slots = 0
+            for slot_col in slot_columns:
+                if self.dataframes['timeslots'].loc[row_idx, slot_col] != 'none':
+                    occupied_slots += 1
+            
+            if occupied_slots >= self.parallel_event:
+                return False
+
             # Check if this timeslot exists
             if current_time_col not in self.dataframes['lecturer_availability'].columns:
                 return False
