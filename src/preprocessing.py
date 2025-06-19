@@ -50,6 +50,9 @@ class Dataframe:
         
         # drop all columns if the header is nan
         df = df.loc[:, df.columns.notna()]
+        
+        # add new columns for `original_idx`
+        df['original_idx'] = df.index
         return df
 
     def lecture_field(self):
@@ -120,6 +123,12 @@ class Dataframe:
         
         # Step 5: Create and return the new dataframe
         expanded_df = pd.DataFrame(expanded_data)
+        
+        # Step 6: Count the number of 'True' values in each row (from the third column onwards)
+        # Handle both string "TRUE" and boolean True values
+        expanded_df.insert(1, 'availability_count', expanded_df.iloc[:, 2:].apply(
+            lambda row: sum((row == True) | (row == "TRUE") | (row == "True")), axis=1
+        ))
         
         return expanded_df
 
