@@ -1,5 +1,6 @@
 import pandas as pd
 import os
+import re
 
 class Dataframe:
     def __init__(self,
@@ -20,12 +21,161 @@ class Dataframe:
         if not os.path.exists(self.request_path):
             raise FileNotFoundError(f"Request file not found: {self.request_path}")
 
+        # Verify CSV formats before processing
+        self.verify_csv_formats()
+
         # Prepare all dataframes
         self.availability_df = self.read_and_clean_availability()
         self.request_df = self.read_and_clean_request()
         self.lecture_df = self.lecture_field()
         self.lecture_avail_df = self.get_lecture_availability()
         self.timeslot_df = self.create_timeslot_dataframe()
+
+    def verify_csv_formats(self):
+        """
+        Verifies the format of both availability and request CSV files.
+        Raises ValueError if format is incorrect.
+        """
+        # Verify availability CSV format
+        self._verify_availability_format()
+        
+        # Verify request CSV format
+        self._verify_request_format()
+
+    def _verify_availability_format(self):
+        """
+        Verifies the availability CSV format.
+        """
+        # Read the raw CSV to check headers
+        df = pd.read_csv(self.availibility_path, header=None)
+        
+        if df.empty:
+            raise ValueError("Availability CSV file is empty")
+        
+        # Get the first row (header)
+        header = df.iloc[0].tolist()
+        
+        # Check basic required columns
+        required_start = ['nama_dosen', 'kode_dosen', 'sk_1', 'sk_2', 'sk_3', 'sk_4']
+        
+        if len(header) < len(required_start):
+            raise ValueError(f"Availability CSV header too short. Expected at least {len(required_start)} columns")
+        
+        # Check if required columns are present at the start
+        for i, expected in enumerate(required_start):
+            if header[i] != expected:
+                raise ValueError(f"Availability CSV header mismatch at position {i}. Expected '{expected}', got '{header[i]}'")
+        
+        # Check datetime columns format (after sk_4)
+        datetime_columns = header[6:]  # Skip first 6 columns
+        datetime_pattern = re.compile(r'^\d{8}_\d{4}$')
+        
+        for col in datetime_columns:
+            if col and not datetime_pattern.match(str(col)):
+                raise ValueError(f"Availability CSV datetime column '{col}' does not match format YYYYMMDD_HHMM")
+        
+        # Verify data format (skip rows 1 and 2 as they will be deleted)
+        data_rows = df.iloc[3:] if len(df) > 3 else pd.DataFrame()
+        
+        if not data_rows.empty:
+            # Check kode_dosen format (should be 3 letters)
+            kode_dosen_col = data_rows.iloc[:, 1]  # Second column
+            for idx, code in enumerate(kode_dosen_col):
+                if pd.notna(code) and (not isinstance(code, str) or len(str(code)) != 3):
+                    raise ValueError(f"Availability CSV row {idx + 4}: kode_dosen '{code}' should be exactly 3 letters")
+            
+            # Check sk_1 to sk_4 format (should be 4 letters if not empty)
+            for sk_idx in range(2, 6):  # Columns 2-5 are sk_1 to sk_4
+                sk_col = data_rows.iloc[:, sk_idx]
+                for idx, sk_value in enumerate(sk_col):
+                    if pd.notna(sk_value) and sk_value != '' and (not isinstance(sk_value, str) or len(str(sk_value)) != 4):
+                        raise ValueError(f"Availability CSV row {idx + 4}: sk_{sk_idx-1} '{sk_value}' should be exactly 4 letters or empty")
+            
+            # Check availability values (should be TRUE, FALSE, or empty)
+            availability_cols = data_rows.iloc[:, 6:]  # Datetime columns
+            valid_values = {'TRUE', 'FALSE', True, False, '', None}
+            
+            for col_idx in range(availability_cols.shape[1]):
+                col_data = availability_cols.iloc[:, col_idx]
+                for row_idx, value in enumerate(col_data):
+                    if pd.isna(value):
+                        continue
+                    if value not in valid_values:
+                        raise ValueError(f"Availability CSV row {row_idx + 4}, column {col_idx + 7}: value '{value}' should be TRUE, FALSE, or empty")
+
+    def _verify_request_format(self):
+        """
+        Verifies the request CSV format.
+        """
+        # Read the raw CSV to check headers
+        df = pd.read_csv(self.request_path, header=None)
+        
+        if df.empty:
+            raise ValueError("Request CSV file is empty")
+        
+        # Get the first row (header)
+        header = df.iloc[0].tolist()
+        
+        # Check required header format
+        expected_header = ['nama', 'nim', 'judul', 'capstone_code', 'field_1', 'field_2', 
+                          'spv_1', 'spv_2', 'date_time', 'examiner_1', 'examiner_2', 'status']
+        
+        if len(header) < len(expected_header):
+            raise ValueError(f"Request CSV header too short. Expected {len(expected_header)} columns")
+        
+        # Check if headers match (only check defined columns, ignore extra columns)
+        for i, expected in enumerate(expected_header):
+            if i < len(header) and header[i] != expected:
+                raise ValueError(f"Request CSV header mismatch at position {i}. Expected '{expected}', got '{header[i]}'")
+        
+        # Get availability CSV to check lecturer codes
+        avail_df = pd.read_csv(self.availibility_path, header=None)
+        avail_header = avail_df.iloc[0].tolist()
+        
+        # Extract lecturer codes from availability CSV (skip rows 1 and 2)
+        valid_lecturer_codes = set()
+        if len(avail_df) > 3:
+            kode_dosen_idx = avail_header.index('kode_dosen') if 'kode_dosen' in avail_header else 1
+            lecturer_codes = avail_df.iloc[3:, kode_dosen_idx]
+            valid_lecturer_codes = set(code for code in lecturer_codes if pd.notna(code) and str(code).strip())
+        
+        # Verify data format (skip row 1 as it will be deleted)
+        data_rows = df.iloc[2:] if len(df) > 2 else pd.DataFrame()
+        
+        if not data_rows.empty:
+            # Find column indices
+            date_time_idx = header.index('date_time') if 'date_time' in header else 8
+            spv_1_idx = header.index('spv_1') if 'spv_1' in header else 6
+            spv_2_idx = header.index('spv_2') if 'spv_2' in header else 7
+            examiner_1_idx = header.index('examiner_1') if 'examiner_1' in header else 9
+            examiner_2_idx = header.index('examiner_2') if 'examiner_2' in header else 10
+            
+            for idx, row in data_rows.iterrows():
+                # Check date_time column should be blank
+                if idx < len(data_rows) + 2:  # Adjust for actual row number
+                    date_time_value = row.iloc[date_time_idx] if date_time_idx < len(row) else None
+                    if pd.notna(date_time_value) and str(date_time_value).strip():
+                        raise ValueError(f"Request CSV row {idx + 1}: date_time column should be blank, got '{date_time_value}'")
+                
+                # Check lecturer codes
+                lecturer_columns = [
+                    ('spv_1', spv_1_idx),
+                    ('spv_2', spv_2_idx),
+                    ('examiner_1', examiner_1_idx),
+                    ('examiner_2', examiner_2_idx)
+                ]
+                
+                for col_name, col_idx in lecturer_columns:
+                    if col_idx < len(row):
+                        value = row.iloc[col_idx]
+                        if pd.notna(value) and str(value).strip():
+                            lecturer_code = str(value).strip()
+                            # Check if it's exactly 3 letters
+                            if len(lecturer_code) != 3:
+                                raise ValueError(f"Request CSV row {idx + 1}: {col_name} '{lecturer_code}' should be exactly 3 letters")
+                            # Check if lecturer code exists in availability CSV
+                            if lecturer_code not in valid_lecturer_codes:
+                                raise ValueError(f"Request CSV row {idx + 1}: {col_name} '{lecturer_code}' not found in availability CSV lecturer codes")
 
     def read_and_clean_availability(self):
         """

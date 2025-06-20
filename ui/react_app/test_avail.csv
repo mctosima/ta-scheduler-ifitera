@@ -1,0 +1,5 @@
+Name,Expertise,Mon0900,Mon0930,Mon1000,Mon1030,Mon1100,Mon1130,Mon1200,Mon1230,Mon1300,Mon1330,Mon1400,Mon1430,Mon1500,Mon1530,Mon1600,Mon1630,Mon1700,Mon1730,Mon1800,Mon1830,Mon1900,Mon1930
+Dr. Smith,Computer Science,1,1,1,1,1,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0,0,0
+Dr. Johnson,Software Engineering,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,0,0,0,0,0,0,0
+Dr. Brown,Data Science,0,0,1,1,1,1,0,0,1,1,1,1,1,1,1,1,1,0,0,0,0,0
+Dr. Wilson,Machine Learning,1,1,1,1,1,1,0,0,0,0,1,1,1,1,1,1,1,1,0,0,0,0

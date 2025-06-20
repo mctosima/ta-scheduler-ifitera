@@ -2,8 +2,43 @@
 
 An intelligent thesis defense scheduling system that automatically assigns examiners and schedules thesis defense sessions based on lecturer availability and expertise matching.
 
+## What's New! 🚀
+
+### Version 1.0 - Major Updates
+
+> **🎉 Web Interface Launch**: The system now features a complete web interface built with React and Flask, making it easier than ever to upload files and run scheduling operations through your browser.
+
+### Latest Features & Improvements
+
+#### 🌐 **New Web Interface**
+- **Modern React Frontend**: Intuitive drag-and-drop file upload interface
+- **Real-time Progress**: Live feedback during scheduling operations
+- **Interactive Results**: View and download schedules directly from the browser
+- **Automated Setup**: One-click environment setup with `setup.sh` and `start.sh` scripts
+- **Responsive Design**: Works seamlessly on desktop and mobile devices
+
+#### 📅 **Enhanced Scheduling Capabilities**
+- **Sidang Akhir Support**: Now handles final defense sessions where examiners are pre-assigned
+- **Improved Date/Time Display**: More human-readable Indonesian date and time formatting in all output files
+- **30-Minute Precision**: Timeslots now operate on 30-minute intervals for more efficient scheduling while maintaining 1-hour input format for availability
+
+#### 🐛 **Critical Bug Fixes**
+- **Parallel Schedule Conflict**: Fixed the critical bug where one person could be assigned to two parallel schedules simultaneously
+- **Data Integrity**: Enhanced validation to prevent scheduling conflicts and double-bookings
+
+#### 🎓 **Capstone Project Enhancements**
+- **Extended Timing Support**: Automatic duration adjustment based on capstone group size
+   - 2 students: 90 minutes (3 slots)
+   - 3 students: 120 minutes (4 slots)  
+   - 4 students: 150 minutes (5 slots)
+- **Group Consistency**: Ensures all students in a capstone group get the same examiners and time slot
+
+#### ⚡ **Performance Improvements**
+- **Efficient Time Management**: Scheduling operates on precise 30-minute intervals internally while maintaining user-friendly 60-minute input format in spreadsheets for easier availability entry
+
 ## Table of Contents
 - [Overview](#overview)
+- [Web Interface](#web-interface)
 - [Installation](#installation)
 - [Usage](#usage)
 - [Input Files](#input-files)
@@ -23,13 +58,68 @@ The Thesis Scheduling System is designed to automate the complex task of schedul
 - Time slot duration requirements
 - Parallel event scheduling capabilities
 
+## Web Interface
+
+The system now includes a modern web interface built with React and Python Flask, providing an intuitive way to upload files, run the scheduling algorithm, and view results.
+
+![Thesis Scheduler Interface](img/interface.png)
+
+### Features
+- **File Upload Interface**: Drag-and-drop or browse to upload availability and request CSV files
+- **Real-time Processing**: Live feedback during scheduling process
+- **Interactive Results**: View and download generated schedules
+- **Responsive Design**: Works on desktop and mobile devices
+- **Error Handling**: Clear feedback for file format issues or processing errors
+
 ## Installation
 
 ### Prerequisites
 - Python 3.7 or higher
+- Node.js 14 or higher (for web interface)
 - pip package manager
+- npm package manager
 
 ### Setup Instructions
+
+#### Option 1: Web Interface (Recommended)
+
+1. **Clone the repository:**
+   ```bash
+   git clone <repository-url>
+   cd ta-scheduler-ifitera
+   ```
+
+2. **Navigate to the web interface directory:**
+   ```bash
+   cd ui/react_app
+   ```
+
+3. **Run the automated setup script:**
+   ```bash
+   chmod +x setup.sh
+   ./setup.sh
+   ```
+   
+   This script will:
+   - Create a Python virtual environment for the backend
+   - Install all Python dependencies (Flask, pandas, numpy, etc.)
+   - Install Node.js dependencies for the React frontend
+   - Set up the complete development environment
+
+4. **Start the application:**
+   ```bash
+   chmod +x start.sh
+   ./start.sh
+   ```
+   
+   This will start both:
+   - Backend API server at `http://localhost:5000`
+   - Frontend React app at `http://localhost:5173`
+
+5. **Open your browser:**
+   Navigate to `http://localhost:5173` to use the web interface
+
+#### Option 2: Command Line Only
 
 1. **Clone the repository:**
    ```bash
@@ -41,6 +131,11 @@ The Thesis Scheduling System is designed to automate the complex task of schedul
    ```bash
    python -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. **Install required dependencies:**
+   ```bash
+   pip install pandas numpy configparser
    ```
 
 3. **Install required dependencies:**
@@ -60,7 +155,35 @@ The Thesis Scheduling System is designed to automate the complex task of schedul
 
 ## Usage
 
-### Basic Usage
+### Web Interface Usage (Recommended)
+
+1. **Start the application:**
+   ```bash
+   cd ui/react_app
+   ./start.sh
+   ```
+
+2. **Open your browser:**
+   Navigate to `http://localhost:5173`
+
+3. **Upload your files:**
+   - Click "Choose Files" or drag and drop your CSV files
+   - Upload the availability file (lecturer availability data)
+   - Upload the request file (thesis defense requests)
+
+4. **Configure settings:**
+   - Adjust parallel events if needed
+   - Set time slot durations for different group sizes
+
+5. **Run the scheduler:**
+   - Click "Run Scheduler" button
+   - Monitor the real-time progress
+
+6. **Download results:**
+   - View the generated schedules in the interface
+   - Download the output files (CSV format)
+
+### Command Line Usage
 
 1. **Configure the system:**
    Edit `config.ini` to specify your input files and parameters:
@@ -246,26 +369,29 @@ time_slot_dur = 30
 - [x] Statistical reporting
 - [x] Configuration management
 - [x] Error handling and logging
+- [x] **Web Interface Implementation**
+  - [x] React frontend with modern UI
+  - [x] Python Flask backend API
+  - [x] File upload interface for CSV inputs
+  - [x] Real-time scheduling progress display
+  - [x] Interactive results visualization
+  - [x] Download functionality for output files
+  - [x] Automated setup script (`setup.sh`)
+  - [x] Automated start script (`start.sh`)
+  - [x] Responsive design for mobile and desktop
+  - [x] Error handling and user feedback
 
 ### Planned Features 🚧
 
-#### Phase 1: Web Interface Development
-- [ ] **Static Web Application**
-  - [ ] HTML/CSS/JavaScript frontend
-  - [ ] File upload interface for CSV inputs
-  - [ ] Real-time scheduling progress display
-  - [ ] Interactive schedule visualization
-  - [ ] Download links for output files
-
-#### Phase 2: Enhanced Web Features
+#### Phase 1: Enhanced Web Features
 - [ ] **Advanced Web Interface**
-  - [ ] Drag-and-drop file upload
-  - [ ] Data validation feedback
   - [ ] Schedule editing capabilities
   - [ ] Conflict resolution interface
   - [ ] Export options (PDF, Excel)
+  - [ ] Data validation feedback with detailed messages
+  - [ ] Bulk file processing
 
-#### Phase 3: Deployment
+#### Phase 2: Deployment
 - [ ] **Production Deployment**
   - [ ] Cloud hosting setup (AWS/GCP/Azure)
   - [ ] Domain configuration
@@ -273,25 +399,35 @@ time_slot_dur = 30
   - [ ] Performance optimization
   - [ ] Monitoring and logging setup
 
-#### Phase 4: Advanced Features
+#### Phase 3: Advanced Features
 - [ ] **System Enhancements**
   - [ ] Database integration
   - [ ] User authentication system
   - [ ] API development for integration
-  - [ ] Mobile-responsive design
+  - [ ] Mobile app development
   - [ ] Automated email notifications
 
-### Technical Architecture (Planned)
+### Technical Architecture ✅
 
 **Frontend:**
-- HTML5/CSS3/JavaScript
-- Bootstrap for responsive design
-- Chart.js for schedule visualization
+- React.js with modern hooks and functional components
+- CSS3 with responsive design
+- File upload with drag-and-drop support
+- Real-time progress indicators
 
 **Backend:**
-- Python Flask/Django web framework
+- Python Flask web framework
 - RESTful API design
 - File processing endpoints
+- Integration with existing scheduling algorithm
+
+**Development Tools:**
+- Automated setup script (`setup.sh`) for environment configuration
+- Automated start script (`start.sh`) for running both frontend and backend
+- Virtual environment management
+- Development server with hot-reload
+
+### Future Enhancements
 
 **Deployment:**
 - Docker containerization
@@ -320,13 +456,38 @@ For questions or issues, please:
 ## System Requirements
 
 - **Python:** 3.7+
+- **Node.js:** 14+ (for web interface)
 - **Memory:** 512MB RAM minimum
-- **Storage:** 50MB free space
+- **Storage:** 100MB free space (increased for web interface dependencies)
 - **OS:** Windows, macOS, or Linux
 
 ## Troubleshooting
 
 **Common Issues:**
+
+### Web Interface Issues:
+
+1. **Setup Script Fails:**
+   - Ensure Python 3.7+ and Node.js 14+ are installed
+   - Check internet connection for downloading dependencies
+   - Run `./setup.sh` with administrator privileges if needed
+
+2. **Backend Won't Start:**
+   - Verify virtual environment is activated: `source backend/venv/bin/activate`
+   - Check if port 5000 is available
+   - Install dependencies manually: `pip install Flask Flask-CORS pandas numpy`
+
+3. **Frontend Won't Start:**
+   - Ensure Node.js dependencies are installed: `npm install`
+   - Check if port 5173 is available
+   - Clear npm cache: `npm cache clean --force`
+
+4. **File Upload Issues:**
+   - Ensure CSV files have proper format and encoding (UTF-8)
+   - Check file size limits (max 10MB per file)
+   - Verify CSV headers match expected format
+
+### Command Line Issues:
 
 1. **File Not Found Error:**
    - Ensure input files are in `data/input/` directory

@@ -64,6 +64,10 @@ schedule_request_multiple_with_recommendations.csv
 schedule_request_with_recommendations.csv
 schedule_request_multiple.csv
 
+/ui/react_app/backend/outputs
+/ui/react_app/backend/uploads
+/ui/react_app/backend/venv
+
 # Configuration files with sensitive data (uncomment if needed)
 # config.ini
 # config.local.ini
