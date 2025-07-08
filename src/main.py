@@ -1,5 +1,6 @@
 import pandas as pd
 import numpy as np
+import random
 import os
 
 from config import read_config
@@ -9,7 +10,9 @@ from scheduler import ThesisScheduler
 from cleanup import Cleaner
 
 # Set random seed for reproducibility
-np.random.seed(42)
+RANDOM_SEED = 2222
+random.seed(RANDOM_SEED)
+np.random.seed(RANDOM_SEED)
 
 def run_scheduler():
     # read the `config.ini` file
@@ -56,7 +59,7 @@ def run_scheduler():
     # Print statistics before cleaning (when num_assignment column still exists)
     schedule.print_statistics()
     
-    cleaned_dataframe = Cleaner(returned_dataframe).clean()
+    cleaned_dataframe = Cleaner(returned_dataframe, config).clean()
     
     export_results(cleaned_dataframe['request'], cleaned_dataframe['timeslots'], cleaned_dataframe['lecturers'], config)
 

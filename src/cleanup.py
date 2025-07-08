@@ -20,8 +20,9 @@ INDONESIAN_MONTHS = {
 }
 
 class Cleaner:
-    def __init__(self, dataframe):
+    def __init__(self, dataframe, config):
         self.dataframe = dataframe
+        self.config = config
 
     def clean(self):
         self._clean_request()
@@ -203,7 +204,7 @@ class Cleaner:
         
         # Rearrange the columns from left to right
         columns_order = ['original_idx', 'nim', 'nama', 
-                         'capstone_code', 'Date', 'Start Time', 
+                         'capstone_code', 'type', 'Date', 'Start Time', 
                          'End Time', 'spv_1', 'spv_2', 'examiner_1', 'examiner_2',
                          'status', 'field_1', 'field_2',
         ]
@@ -211,7 +212,8 @@ class Cleaner:
     
     def _get_timeslot_duration(self, row):
         """
-        Get the timeslot duration for a specific request based on whether it's capstone or individual.
+        Get the timeslot duration for a specific request based on whether it's capstone or individual,
+        and the type of event (Proposal vs Sidang Akhir).
         
         Args:
             row (pandas.Series): Request row data
@@ -219,6 +221,8 @@ class Cleaner:
         Returns:
             int: Number of 30-minute timeslots needed
         """
+        request_type = row.get('type', 'Proposal')  # Default to Proposal if type not found
+        
         # Check if it's a capstone project
         if pd.notna(row.get('capstone_code')):
             # Get all rows with same capstone code to count students
@@ -227,14 +231,30 @@ class Cleaner:
             ]
             num_students = len(same_group)
             
-            # Return duration based on number of students (matching scheduler logic)
-            if num_students == 2:
-                return 3  # capstone_duration_2
-            elif num_students == 3:
-                return 4  # capstone_duration_3
-            elif num_students == 4:
-                return 5  # capstone_duration_4
+            # Return duration based on number of students and type
+            if request_type == 'Sidang Akhir':
+                # Use sidang configurations
+                if num_students == 2:
+                    return int(self.config['capstone_duration_sidang_2'])
+                elif num_students == 3:
+                    return int(self.config['capstone_duration_sidang_3'])
+                elif num_students == 4:
+                    return int(self.config['capstone_duration_sidang_4'])
+                else:
+                    return int(self.config['default_timeslot_sidang'])
             else:
-                return 2  # default_timeslot
+                # Use proposal configurations (default)
+                if num_students == 2:
+                    return int(self.config['capstone_duration_2'])
+                elif num_students == 3:
+                    return int(self.config['capstone_duration_3'])
+                elif num_students == 4:
+                    return int(self.config['capstone_duration_4'])
+                else:
+                    return int(self.config['default_timeslot'])
         else:
-            return 2  # default_timeslot for individual students
+            # Individual student
+            if request_type == 'Sidang Akhir':
+                return int(self.config['default_timeslot_sidang'])
+            else:  # Proposal or any other type
+                return int(self.config['default_timeslot'])

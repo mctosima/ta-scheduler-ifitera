@@ -117,7 +117,7 @@ class Dataframe:
         header = df.iloc[0].tolist()
         
         # Check required header format
-        expected_header = ['nama', 'nim', 'judul', 'capstone_code', 'field_1', 'field_2', 
+        expected_header = ['nama', 'nim', 'judul', 'capstone_code', 'type', 'field_1', 'field_2', 
                           'spv_1', 'spv_2', 'date_time', 'examiner_1', 'examiner_2', 'status']
         
         if len(header) < len(expected_header):
