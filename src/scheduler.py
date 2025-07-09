@@ -33,6 +33,8 @@ class ThesisScheduler:
         
         # Iterate through each request
         for index, request in self.dataframes['request'].iterrows():
+            print(f"Processing request {index}: {request['nim']}")
+            
             
             # if the request['date_time'] is not NaN, skip this request
             if pd.notna(request['date_time']):
@@ -86,28 +88,37 @@ class ThesisScheduler:
             # - Criteria B: Least number of assignments: (Less assignments - More Score)
             # - Criteria C: Least available timeslots: (Less available - More Score)
             if len(temp_lect_pool) > 0:
-                assigned_act_avail, ranked_pool_df = self._rank_lecturer(temp_lect_pool, request, assigned_actor)
+                assigned_act_avail, ranked_pool_df = self._rank_lecturer(temp_lect_pool, request, assigned_actor, round_num=1)
                 ranked_pool_df_display = ranked_pool_df.drop(columns=['matched_timeslots'])
             else:
                 print("No lecturers available after field filtering")
                 continue
             
             # Assign the highest ranked from the pool to serve as examiner
-            self._assign_actor(request, index, ranked_pool_df, request_id, round_num=1)
+            assignment_success = self._assign_actor(request, index, ranked_pool_df, request_id, round_num=1)
             
-            # if index > 8:
+            # Check if both examiners were assigned in round 1
+            updated_request = self.dataframes['request'].loc[index]
+            if pd.notna(updated_request['examiner_1']) and pd.notna(updated_request['examiner_2']) and assignment_success:
+                print(f"===COMPLETED=== Both examiners assigned in round 1: {updated_request}")
+            else:
+                # Cancel partial assignment - reset examiners and datetime for round 2
+                print(f"===INCOMPLETE=== Only partial assignment in round 1, resetting for round 2: {updated_request}")
+                self._reset_partial_assignment(index, updated_request)
+            
+            # if index == 1:
             #     break
+            
         
         if self.round2:
             # Count unscheduled requests before round 2
             self.unscheduled_before_round_2 = self._count_unscheduled_requests()
+            print(f"Unscheduled requests before round 2: {self.unscheduled_before_round_2}")
             
             # ROUND 2 SCHEDULING IF THE REQUEST STILL HAS UNASSIGNED SCHEDULE BECAUSE EXPERTISE FIELD DOES NOT MATCH
             print(f" ==== Starting round 2 scheduling for requests with unassigned examiners... ====")
             for index, request in self.dataframes['request'].iterrows():
                 
-                if index > 44:
-                    break
                 
                 # check if the request['date_time'] is not NaN, skip this request
                 if pd.notna(request['date_time']):
@@ -134,8 +145,9 @@ class ThesisScheduler:
                 # - Criteria A: Most matched schedule with assigned actors (More match - Less Score)
                 # - Criteria B: Least number of assignments: (Less assignments - More Score)
                 # - Criteria C: Least available timeslots: (Less available - More Score)
+                # - Criteria D (Round 2): Expertise match bonus - double score if expertise matches
                 if len(temp_lect_pool) > 0:
-                    assigned_act_avail, ranked_pool_df = self._rank_lecturer(temp_lect_pool, request, assigned_actor)
+                    assigned_act_avail, ranked_pool_df = self._rank_lecturer(temp_lect_pool, request, assigned_actor, round_num=2)
                     ranked_pool_df_display = ranked_pool_df.drop(columns=['matched_timeslots'])
                 else:
                     print("No lecturers available in round 2 scheduling")
@@ -161,9 +173,12 @@ class ThesisScheduler:
             ranked_pool_df (pandas.DataFrame): Ranked lecturers with scores for current request
             request_id: Single student ID (str) or list of student IDs for capstone projects
             round_num (int): Round number (1 or 2) to determine status message
+            
+        Returns:
+            bool: True if assignment was successful, False otherwise
         """
         if ranked_pool_df.empty:
-            return
+            return False
         
         # Get the current request details
         request_type = 'capstone' if pd.notna(current_request.get('capstone_code')) else 'individual'
@@ -173,37 +188,71 @@ class ThesisScheduler:
         # Sort by score (best first - highest total_score is best)
         sorted_candidates = ranked_pool_df.sort_values('total_score', ascending=False)
         
+        print(f"Sorted Candidates: {sorted_candidates.head()}")
+        
         # Get the number of examiners needed
         num_examiners_needed = len([role for role in ['examiner_1', 'examiner_2'] 
                                    if pd.isna(current_request.get(role))])
         
-        # Select top candidates
-        selected_examiners = sorted_candidates.head(num_examiners_needed)
+        print(f"Number of examiners needed for request {nim}: {num_examiners_needed}")
         
-        # Get examiner codes
-        examiner_codes = selected_examiners['kode_dosen'].tolist()
-        
-        # Get assigned datetime from matched timeslots (use first available from best candidate)
-        first_examiner_timeslots = selected_examiners.iloc[0]['matched_timeslots']
-        assigned_datetime = first_examiner_timeslots[0] if first_examiner_timeslots else None
+        # Handle case where all examiners are already assigned
+        if num_examiners_needed == 0:
+            print(f"All examiners already assigned for request {nim}. Finding suitable time for existing actors.")
+            # Use the best candidate from ranked pool to get available timeslots
+            if not sorted_candidates.empty:
+                best_candidate_timeslots = sorted_candidates.iloc[0]['matched_timeslots']
+                assigned_datetime = best_candidate_timeslots[0] if best_candidate_timeslots else None
+                examiner_codes = []  # No new examiners to assign
+            else:
+                print(f"No available timeslots found for request {nim}")
+                return False
+        else:
+            # For round 1, ensure we can assign BOTH examiners or fail
+            if round_num == 1 and num_examiners_needed > 0:
+                if num_examiners_needed < 2:
+                    # This shouldn't happen in round 1 based on our logic, but safety check
+                    print(f"Warning: Unexpected state in round 1 - only {num_examiners_needed} examiners needed")
+                    return False
+                
+                # We need exactly 2 examiners - check if we have enough candidates
+                if len(sorted_candidates) < 2:
+                    print(f"Insufficient candidates for round 1 assignment: {len(sorted_candidates)} < 2")
+                    return False
+            
+            # Select top candidates for examiner assignment
+            selected_examiners = sorted_candidates.head(num_examiners_needed)
+            
+            # Get examiner codes
+            examiner_codes = selected_examiners['kode_dosen'].tolist()
+            
+            # Get assigned datetime from matched timeslots (use first available from best candidate)
+            first_examiner_timeslots = selected_examiners.iloc[0]['matched_timeslots']
+            assigned_datetime = first_examiner_timeslots[0] if first_examiner_timeslots else None
         
         print(f"Assigning examiners: {examiner_codes} for datetime: {assigned_datetime}")
         
-        # Determine status based on round number
-        status = "Time and Expertise Match" if round_num == 1 else "Time Match Only"
+        # Determine status based on round number and examiner assignment status
+        if num_examiners_needed == 0:
+            # All examiners are pre-assigned, only finding time
+            status = "Time Match Only (Examiner Already Assigned)"
+        else:
+            # Assigning new examiners based on round
+            status = "Time and Expertise Match" if round_num == 1 else "Time Match Only"
         
         # Update request dataframe
         if request_type == 'capstone' and capstone_code:
             # Update all requests in the same capstone group
             group_mask = self.dataframes['request']['capstone_code'] == capstone_code
             
-            # Assign examiners
-            examiner_idx = 0
-            if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes):
-                self.dataframes['request'].loc[group_mask, 'examiner_1'] = examiner_codes[examiner_idx]
-                examiner_idx += 1
-            if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes):
-                self.dataframes['request'].loc[group_mask, 'examiner_2'] = examiner_codes[examiner_idx]
+            # Assign examiners only if there are new examiners to assign
+            if examiner_codes:
+                examiner_idx = 0
+                if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes):
+                    self.dataframes['request'].loc[group_mask, 'examiner_1'] = examiner_codes[examiner_idx]
+                    examiner_idx += 1
+                if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes):
+                    self.dataframes['request'].loc[group_mask, 'examiner_2'] = examiner_codes[examiner_idx]
             
             # Update datetime and status
             self.dataframes['request'].loc[group_mask, 'date_time'] = assigned_datetime
@@ -212,13 +261,14 @@ class ThesisScheduler:
             # Update individual request
             request_mask = self.dataframes['request']['nim'] == nim
             
-            # Assign examiners
-            examiner_idx = 0
-            if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes):
-                self.dataframes['request'].loc[request_mask, 'examiner_1'] = examiner_codes[examiner_idx]
-                examiner_idx += 1
-            if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes):
-                self.dataframes['request'].loc[request_mask, 'examiner_2'] = examiner_codes[examiner_idx]
+            # Assign examiners only if there are new examiners to assign
+            if examiner_codes:
+                examiner_idx = 0
+                if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes):
+                    self.dataframes['request'].loc[request_mask, 'examiner_1'] = examiner_codes[examiner_idx]
+                    examiner_idx += 1
+                if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes):
+                    self.dataframes['request'].loc[request_mask, 'examiner_2'] = examiner_codes[examiner_idx]
             
             # Update datetime and status
             self.dataframes['request'].loc[request_mask, 'date_time'] = assigned_datetime
@@ -248,7 +298,7 @@ class ThesisScheduler:
             except Exception as e:
                 print(f"Error updating timeslot: {e}")
         
-        # Update lecturer_availability dataframe (lecturers table)
+        # Update lecturer_availability dataframe (lecturers table) - only for newly assigned examiners
         for examiner_code in examiner_codes:
             lecturer_mask = self.dataframes['lecturers']['kode_dosen'] == examiner_code
             
@@ -279,6 +329,8 @@ class ThesisScheduler:
                 self.dataframes['lecturers'].at[lecturer_idx, 'num_assignment'] = len(used_timeslots)
                 
                 print(f"Updated lecturer {examiner_code}: assignments={len(used_timeslots)}, timeslots={used_timeslots}")
+        
+        return True
 
     def _check_same_field(self, temp_lect_pool, field_1, field_2, assigned_actors):
         """
@@ -354,7 +406,7 @@ class ThesisScheduler:
                     matching_lecturers.append(lecturer_code)
         return np.array(matching_lecturers)
     
-    def _rank_lecturer(self, temp_lect_pool, request, assigned_actors):
+    def _rank_lecturer(self, temp_lect_pool, request, assigned_actors, round_num=1):
         """
         Rank lecturers based on availability match with assigned actors, assignments, and overall availability.
         
@@ -362,6 +414,7 @@ class ThesisScheduler:
             temp_lect_pool (numpy.ndarray): Array of lecturer codes to rank
             request (pandas.Series): Current request being processed
             assigned_actors (list): List of already assigned actor roles
+            round_num (int): Round number (1 or 2) to determine scoring logic
             
         Returns:
             pandas.DataFrame: Ranked lecturers with scores for each criteria
@@ -383,7 +436,7 @@ class ThesisScheduler:
         })
         
         # Step 4: Calculate scores for each criteria
-        ranked_pool_df = self._calculate_criteria_scores(ranked_pool_df, available_timeslots, required_duration)
+        ranked_pool_df = self._calculate_criteria_scores(ranked_pool_df, available_timeslots, required_duration, request, round_num)
         
         # Check if DataFrame is empty after filtering
         if ranked_pool_df.empty:
@@ -605,7 +658,7 @@ class ThesisScheduler:
                 
         return False
 
-    def _calculate_criteria_scores(self, lecturers_df, available_timeslots, required_duration):
+    def _calculate_criteria_scores(self, lecturers_df, available_timeslots, required_duration, request, round_num=1):
         """
         Calculate scores for each criteria and add them to the lecturers dataframe.
         
@@ -613,6 +666,8 @@ class ThesisScheduler:
             lecturers_df (pandas.DataFrame): DataFrame with lecturer codes
             available_timeslots (list): List of available starting timeslot column names
             required_duration (int): Number of consecutive slots needed
+            request (pandas.Series): Current request being processed
+            round_num (int): Round number (1 or 2) to determine scoring logic
             
         Returns:
             pandas.DataFrame: DataFrame with added scoring columns
@@ -625,6 +680,7 @@ class ThesisScheduler:
         lecturers_df['criteria_a_score'] = 0
         lecturers_df['criteria_b_score'] = 0
         lecturers_df['criteria_c_score'] = 0
+        lecturers_df['expertise_match'] = False  # New column for expertise matching
         
         
         # Calculate raw values for each criteria
@@ -684,6 +740,11 @@ class ThesisScheduler:
             if not lecturer_avail.empty:
                 availability_count = lecturer_avail['availability_count']
                 lecturers_df.at[idx, 'criteria_c_availability'] = availability_count
+            
+            # Check expertise match for Round 2 bonus
+            if round_num == 2:
+                expertise_match = self._check_lecturer_expertise_match(lecturer_code, request)
+                lecturers_df.at[idx, 'expertise_match'] = expertise_match
         
         # Filter out lecturers with no availability matches (criteria_a_matches = 0)
         lecturers_df = lecturers_df[lecturers_df['criteria_a_matches'] > 0].reset_index(drop=True)
@@ -701,9 +762,16 @@ class ThesisScheduler:
             lecturers_df['criteria_c_score'] = lecturers_df['criteria_c_availability'].rank(method='min', ascending=False)
             
             # Calculate total score
-            lecturers_df['total_score'] = (lecturers_df['criteria_a_score'] + 1.5 *
+            lecturers_df['total_score'] = (lecturers_df['criteria_a_score'] + 4 *
                                           lecturers_df['criteria_b_score'] + 
                                           lecturers_df['criteria_c_score'])
+            
+            # Apply expertise bonus for Round 2
+            if round_num == 2:
+                # Double the total score for lecturers with expertise match
+                expertise_bonus_mask = lecturers_df['expertise_match']
+                lecturers_df.loc[expertise_bonus_mask, 'total_score'] *= 2
+                print(f"Applied expertise bonus to {expertise_bonus_mask.sum()} lecturers in round 2")
         
         return lecturers_df
 
@@ -762,7 +830,8 @@ class ThesisScheduler:
 
     def _check_timeslot_needed(self, request_id):
         """
-        Determine the timeslot needed for a request based on whether it's a capstone project or not.
+        Determine the timeslot needed for a request based on whether it's a capstone project or not,
+        and the type of event (Proposal vs Sidang Akhir).
         
         Args:
             request_id: Single student ID (str) or list of student IDs for capstone projects
@@ -770,23 +839,57 @@ class ThesisScheduler:
         Returns:
             int: The timeslot duration needed for this request
         """
-        if isinstance(request_id, str):  # Single student (not a capstone project)
-            # Use default timeslot from config for single student
+        # Get the request type from the current request being processed
+        # We need to find the request row to get the type
+        if isinstance(request_id, str):
+            # Single student - find the request row
+            request_row = self.dataframes['request'][
+                self.dataframes['request']['nim'] == request_id
+            ]
+        else:
+            # Capstone project - use the first student to get the type
+            request_row = self.dataframes['request'][
+                self.dataframes['request']['nim'] == request_id[0]
+            ]
+        
+        if request_row.empty:
+            # Fallback to default if request not found
             return int(self.config['default_timeslot'])
+        
+        request_type = request_row.iloc[0].get('type', 'Proposal')  # Default to Proposal if type not found
+        
+        if isinstance(request_id, str):  # Single student (not a capstone project)
+            if request_type == 'Sidang Akhir':
+                return int(self.config['default_timeslot_sidang'])
+            else:  # Proposal or any other type
+                return int(self.config['default_timeslot'])
         else:  # Capstone project (list of student IDs)
             # Get number of students in the capstone group
             num_students = len(request_id)
             
-            # Get timeslot based on number of students from config
-            if num_students == 2:
-                return int(self.config['capstone_duration_2'])
-            elif num_students == 3:
-                return int(self.config['capstone_duration_3'])
-            elif num_students == 4:
-                return int(self.config['capstone_duration_4'])
+            # Get timeslot based on number of students and type from config
+            if request_type == 'Sidang Akhir':
+                # Use sidang configurations
+                if num_students == 2:
+                    return int(self.config['capstone_duration_sidang_2'])
+                elif num_students == 3:
+                    return int(self.config['capstone_duration_sidang_3'])
+                elif num_students == 4:
+                    return int(self.config['capstone_duration_sidang_4'])
+                else:
+                    # Default to single student sidang timeslot for other numbers
+                    return int(self.config['default_timeslot_sidang'])
             else:
-                # Default to single student timeslot for other numbers
-                return int(self.config['default_timeslot'])
+                # Use proposal configurations (default)
+                if num_students == 2:
+                    return int(self.config['capstone_duration_2'])
+                elif num_students == 3:
+                    return int(self.config['capstone_duration_3'])
+                elif num_students == 4:
+                    return int(self.config['capstone_duration_4'])
+                else:
+                    # Default to single student proposal timeslot for other numbers
+                    return int(self.config['default_timeslot'])
 
     def _check_capstone(self, request):
         """
@@ -965,3 +1068,179 @@ class ThesisScheduler:
             print(f"  - Lecturer Utilization Rate: {utilization_rate:.1f}%")
         
         print("="*60)
+    
+    def _reset_partial_assignment(self, request_index, current_request):
+        """
+        Reset partial assignments when only one examiner was assigned in round 1.
+        This ensures requests with incomplete examiner assignments go to round 2.
+        
+        Args:
+            request_index (int): Index of the request in the dataframe
+            current_request (pandas.Series): Current request data
+        """
+        # Get request details
+        nim = current_request['nim']
+        capstone_code = current_request.get('capstone_code', None)
+        request_type = 'capstone' if pd.notna(capstone_code) else 'individual'
+        
+        # Get assigned examiners that need to be reset
+        assigned_examiners = []
+        if pd.notna(current_request.get('examiner_1')):
+            assigned_examiners.append(current_request['examiner_1'])
+        if pd.notna(current_request.get('examiner_2')):
+            assigned_examiners.append(current_request['examiner_2'])
+        
+        # Get assigned datetime to revert timeslot changes
+        assigned_datetime = current_request.get('date_time')
+        
+        # Reset request dataframe
+        if request_type == 'capstone' and capstone_code:
+            # Reset all requests in the same capstone group
+            group_mask = self.dataframes['request']['capstone_code'] == capstone_code
+            self.dataframes['request'].loc[group_mask, 'examiner_1'] = pd.NaT
+            self.dataframes['request'].loc[group_mask, 'examiner_2'] = pd.NaT
+            self.dataframes['request'].loc[group_mask, 'date_time'] = pd.NaT
+            self.dataframes['request'].loc[group_mask, 'status'] = pd.NaT
+        else:
+            # Reset individual request
+            request_mask = self.dataframes['request']['nim'] == nim
+            self.dataframes['request'].loc[request_mask, 'examiner_1'] = pd.NaT
+            self.dataframes['request'].loc[request_mask, 'examiner_2'] = pd.NaT
+            self.dataframes['request'].loc[request_mask, 'date_time'] = pd.NaT
+            self.dataframes['request'].loc[request_mask, 'status'] = pd.NaT
+        
+        # Revert timeslot assignments
+        if assigned_datetime:
+            try:
+                date_part, time_part = assigned_datetime.split('_')
+                formatted_date = f"{date_part[:4]}-{date_part[4:6]}-{date_part[6:8]}"
+                formatted_time = f"{time_part[:2]}:{time_part[2:]}"
+                
+                # Get required timeslot duration 
+                capstone_status, request_id = self._check_capstone(current_request)
+                required_timeslot = self._check_timeslot_needed(request_id)
+                
+                # Revert consecutive timeslots
+                self._revert_consecutive_timeslots(
+                    formatted_date, 
+                    formatted_time, 
+                    required_timeslot, 
+                    capstone_code if request_type == 'capstone' else nim
+                )
+                
+            except Exception as e:
+                print(f"Error reverting timeslot: {e}")
+        
+        # Revert lecturer assignments
+        for examiner_code in assigned_examiners:
+            lecturer_mask = self.dataframes['lecturers']['kode_dosen'] == examiner_code
+            
+            if lecturer_mask.any():
+                lecturer_idx = self.dataframes['lecturers'][lecturer_mask].index[0]
+                current_used = self.dataframes['lecturers'].loc[lecturer_idx, 'used_timeslot']
+                
+                # Remove the assigned datetime from used_timeslot list
+                if isinstance(current_used, list) and assigned_datetime in current_used:
+                    updated_used = [slot for slot in current_used if slot != assigned_datetime]
+                    self.dataframes['lecturers'].at[lecturer_idx, 'used_timeslot'] = updated_used
+                    self.dataframes['lecturers'].at[lecturer_idx, 'num_assignment'] = len(updated_used)
+                    print(f"Reverted lecturer {examiner_code}: assignments={len(updated_used)}")
+        
+        print(f"Reset partial assignment for request {nim}")
+
+    def _revert_consecutive_timeslots(self, start_date, start_time, duration, assignment_name):
+        """
+        Revert consecutive timeslots that were previously assigned.
+        
+        Args:
+            start_date (str): Start date in YYYY-MM-DD format
+            start_time (str): Start time in HH:MM format
+            duration (int): Number of 30-minute slots to revert
+            assignment_name (str): Name of the assignment to remove
+        """
+        # Convert start time to minutes for calculation
+        start_hour, start_minute = map(int, start_time.split(':'))
+        start_minutes = start_hour * 60 + start_minute
+        
+        slots_reverted = 0
+        current_minutes = start_minutes
+        
+        for slot_num in range(duration):
+            # Calculate current slot time
+            current_hour = current_minutes // 60
+            current_min = current_minutes % 60
+            current_time_str = f"{current_hour:02d}:{current_min:02d}"
+            
+            # Find matching timeslot row
+            timeslot_mask = ((self.dataframes['timeslots']['date'] == start_date) & 
+                           (self.dataframes['timeslots']['time'] == current_time_str))
+            
+            if timeslot_mask.any():
+                slot_columns = [col for col in self.dataframes['timeslots'].columns if col.startswith('slot_')]
+                row_idx = self.dataframes['timeslots'][timeslot_mask].index[0]
+                
+                # Find and revert slots assigned to this assignment
+                for slot_col in slot_columns:
+                    if self.dataframes['timeslots'].loc[row_idx, slot_col] == assignment_name:
+                        self.dataframes['timeslots'].loc[row_idx, slot_col] = 'none'
+                        slots_reverted += 1
+                        print(f"Reverted timeslot {start_date} {current_time_str} ({slot_col})")
+                        break
+            
+            # Move to next 30-minute slot
+            current_minutes += 30
+        
+        print(f"Reverted {slots_reverted} timeslots for {assignment_name}")
+    
+    def _check_lecturer_expertise_match(self, lecturer_code, request):
+        """
+        Check if a lecturer's expertise matches the request's field requirements.
+        
+        Args:
+            lecturer_code (str): Code of the lecturer to check
+            request (pandas.Series): Current request being processed
+            
+        Returns:
+            bool: True if lecturer's expertise matches any of the request fields
+        """
+        # Get lecturer row
+        lecturer_row = self.dataframes['lecturers'][
+            self.dataframes['lecturers']['kode_dosen'] == lecturer_code
+        ]
+        
+        if lecturer_row.empty:
+            return False
+        
+        lecturer_row = lecturer_row.iloc[0]
+        field_1 = request['field_1']
+        field_2 = request['field_2']
+        
+        # Find expertise columns dynamically
+        expertise_columns = [col for col in self.dataframes['lecturers'].columns if 'expertise' in col.lower()]
+        
+        # Check if lecturer's expertise matches either field_1 OR field_2
+        for expertise_col in expertise_columns:
+            if expertise_col in lecturer_row:
+                expertise_value = lecturer_row[expertise_col]
+                
+                # Handle different types of expertise values
+                if isinstance(expertise_value, (list, np.ndarray)):
+                    # If it's a list/array, check each element
+                    for expertise_item in expertise_value:
+                        if pd.notna(expertise_item):
+                            expertise_str = str(expertise_item).strip()
+                            field_1_str = str(field_1).strip() if pd.notna(field_1) else ""
+                            field_2_str = str(field_2).strip() if pd.notna(field_2) else ""
+                            
+                            if expertise_str == field_1_str or expertise_str == field_2_str:
+                                return True
+                elif pd.notna(expertise_value):
+                    # Single value
+                    expertise_str = str(expertise_value).strip()
+                    field_1_str = str(field_1).strip() if pd.notna(field_1) else ""
+                    field_2_str = str(field_2).strip() if pd.notna(field_2) else ""
+                    
+                    if expertise_str == field_1_str or expertise_str == field_2_str:
+                        return True
+        
+        return False
