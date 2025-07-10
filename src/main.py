@@ -10,7 +10,7 @@ from scheduler import ThesisScheduler
 from cleanup import Cleaner
 
 # Set random seed for reproducibility
-RANDOM_SEED = 2222
+RANDOM_SEED = 46
 random.seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
 

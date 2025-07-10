@@ -80,7 +80,8 @@ class ThesisScheduler:
                 temp_lect_pool,
                 request['field_1'],
                 request['field_2'],
-                assigned_actor
+                assigned_actor,
+                request
             )
             
             # SCHEDULING LOGIC 2 - RANKING THE LECTURERS BASED ON:
@@ -139,7 +140,18 @@ class ThesisScheduler:
                 required_timeslot = self._check_timeslot_needed(request_id)
                 print(f"required_timeslot for request {index} ({request['nim']}): {required_timeslot} slots")
                 
-                # ROUND 2: SKIP FIELD FILTERING - Use all available lecturers
+                # ROUND 2: SKIP FIELD FILTERING BUT REMOVE ASSIGNED ACTORS
+                # Remove already assigned actors from the pool to prevent conflicts
+                assigned_lecturer_codes = []
+                for actor in assigned_actor:
+                    if actor in ['spv_1', 'spv_2', 'examiner_1', 'examiner_2']:
+                        lecturer_code = request.get(actor)
+                        if pd.notna(lecturer_code):
+                            assigned_lecturer_codes.append(lecturer_code)
+                
+                # Filter out assigned lecturers from the pool
+                temp_lect_pool = np.array([lect for lect in temp_lect_pool if lect not in assigned_lecturer_codes])
+                print(f"Round 2: Filtered out assigned lecturers {assigned_lecturer_codes}, remaining pool size: {len(temp_lect_pool)}")
                 
                 # SCHEDULING LOGIC 2 - RANKING THE LECTURERS BASED ON:
                 # - Criteria A: Most matched schedule with assigned actors (More match - Less Score)
@@ -199,13 +211,27 @@ class ThesisScheduler:
         # Handle case where all examiners are already assigned
         if num_examiners_needed == 0:
             print(f"All examiners already assigned for request {nim}. Finding suitable time for existing actors.")
-            # Use the best candidate from ranked pool to get available timeslots
-            if not sorted_candidates.empty:
-                best_candidate_timeslots = sorted_candidates.iloc[0]['matched_timeslots']
-                assigned_datetime = best_candidate_timeslots[0] if best_candidate_timeslots else None
+            
+            # Get all involved actors for availability check
+            all_involved_actors = []
+            for actor_role in ['spv_1', 'spv_2', 'examiner_1', 'examiner_2']:
+                if pd.notna(current_request.get(actor_role)):
+                    all_involved_actors.append(actor_role)
+            
+            # Get required duration
+            capstone_status, request_id = self._check_capstone(current_request)
+            required_duration = self._check_timeslot_needed(request_id)
+            
+            # Get common availability for all involved actors
+            assigned_actor_availability = self._get_assigned_actor_availability(current_request, all_involved_actors, required_duration)
+            available_timeslots = self._get_free_timeslots(assigned_actor_availability, required_duration)
+            
+            if available_timeslots:
+                assigned_datetime = available_timeslots[0]  # Use first available slot
                 examiner_codes = []  # No new examiners to assign
+                print(f"Found suitable timeslot for all existing actors: {assigned_datetime}")
             else:
-                print(f"No available timeslots found for request {nim}")
+                print(f"No available timeslots found that work for all existing actors for request {nim}")
                 return False
         else:
             # For round 1, ensure we can assign BOTH examiners or fail
@@ -226,9 +252,23 @@ class ThesisScheduler:
             # Get examiner codes
             examiner_codes = selected_examiners['kode_dosen'].tolist()
             
-            # Get assigned datetime from matched timeslots (use first available from best candidate)
-            first_examiner_timeslots = selected_examiners.iloc[0]['matched_timeslots']
-            assigned_datetime = first_examiner_timeslots[0] if first_examiner_timeslots else None
+            # Find a timeslot that works for ALL selected examiners
+            assigned_datetime = None
+            if len(selected_examiners) > 0:
+                # Get the intersection of all selected examiners' available timeslots
+                common_timeslots = set(selected_examiners.iloc[0]['matched_timeslots'])
+                
+                for idx in range(1, len(selected_examiners)):
+                    examiner_timeslots = set(selected_examiners.iloc[idx]['matched_timeslots'])
+                    common_timeslots = common_timeslots.intersection(examiner_timeslots)
+                
+                if common_timeslots:
+                    # Use the first available common timeslot
+                    assigned_datetime = list(common_timeslots)[0]
+                    print(f"Found common timeslot for all selected examiners: {assigned_datetime}")
+                else:
+                    print(f"Error: No common timeslots found for selected examiners {examiner_codes}")
+                    return False
         
         print(f"Assigning examiners: {examiner_codes} for datetime: {assigned_datetime}")
         
@@ -332,7 +372,7 @@ class ThesisScheduler:
         
         return True
 
-    def _check_same_field(self, temp_lect_pool, field_1, field_2, assigned_actors):
+    def _check_same_field(self, temp_lect_pool, field_1, field_2, assigned_actors, current_request=None):
         """
         Filter lecturers based on field expertise matching and remove already assigned actors.
         
@@ -341,6 +381,7 @@ class ThesisScheduler:
             field_1 (str): First field requirement
             field_2 (str): Second field requirement  
             assigned_actors (list): List of already assigned actor names to remove
+            current_request (pandas.Series): Current request to get assigned lecturer codes
             
         Returns:
             numpy.ndarray: Filtered array of lecturer codes that match field requirements
@@ -348,11 +389,16 @@ class ThesisScheduler:
         """
         
         # Remove already assigned actors from temp_lect_pool
-        for actor in assigned_actors:
-            if actor in ['spv_1', 'spv_2', 'examiner_1', 'examiner_2']:
-                # Get lecturer code from the request (assuming it's available in current context)
-                # This would need to be passed as parameter or accessed differently
-                pass
+        assigned_lecturer_codes = []
+        if current_request is not None:
+            for actor in assigned_actors:
+                if actor in ['spv_1', 'spv_2', 'examiner_1', 'examiner_2']:
+                    lecturer_code = current_request.get(actor)
+                    if pd.notna(lecturer_code):
+                        assigned_lecturer_codes.append(lecturer_code)
+        
+        # Filter out assigned lecturers from the pool
+        temp_lect_pool = np.array([lect for lect in temp_lect_pool if lect not in assigned_lecturer_codes])
         
         # Create boolean mask for lecturers that match field requirements
         matching_lecturers = []
@@ -461,17 +507,34 @@ class ThesisScheduler:
             list: List of starting timeslot column names where all assigned actors 
                   are available for the full duration
         """
-        if not assigned_actors:
+        # Get ALL actors involved (both assigned supervisors and any assigned examiners)
+        all_involved_actors = []
+        
+        # Add supervisors if they are assigned
+        for actor_role in ['spv_1', 'spv_2']:
+            if pd.notna(request.get(actor_role)):
+                all_involved_actors.append(actor_role)
+        
+        # Add examiners if they are already assigned
+        for actor_role in ['examiner_1', 'examiner_2']:
+            if pd.notna(request.get(actor_role)):
+                all_involved_actors.append(actor_role)
+        
+        print(f"All involved actors for availability check: {all_involved_actors}")
+        
+        if not all_involved_actors:
             # If no assigned actors, return all timeslots that have sufficient consecutive availability
             time_columns = [col for col in self.dataframes['lecturer_availability'].columns 
                            if col not in ['kode_dosen', 'availability_count']]
             return self._get_consecutive_timeslots(time_columns, required_duration)
         
-        # Get lecturer codes for assigned actors
+        # Get lecturer codes for all involved actors
         assigned_lecturer_codes = []
-        for actor in assigned_actors:
+        for actor in all_involved_actors:
             if actor in request and pd.notna(request[actor]):
-                assigned_lecturer_codes.append(request[actor])
+                lecturer_code = request[actor]
+                assigned_lecturer_codes.append(lecturer_code)
+                print(f"Actor {actor} -> Lecturer {lecturer_code}")
         
         if not assigned_lecturer_codes:
             time_columns = [col for col in self.dataframes['lecturer_availability'].columns 
