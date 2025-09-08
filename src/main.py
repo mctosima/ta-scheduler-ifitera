@@ -51,7 +51,7 @@ def run_scheduler():
     schedule = ThesisScheduler(
         dataframes=dataframes,
         config=config,
-        # round2=False
+        round2=True  # Enable round 2 and round 3 scheduling
     )
     
     returned_dataframe = schedule.run()

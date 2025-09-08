@@ -16,12 +16,26 @@ class ThesisScheduler:
         self.unscheduled_before_round_1 = 0
         self.unscheduled_before_round_2 = 0
         self.unscheduled_after_round_2 = 0
+        self.unscheduled_before_round_3 = 0
+        self.unscheduled_after_round_3 = 0
         
         
         # add new column `num_assignment` and `used_timeslot` to lecturers dataframe
         self.dataframes['lecturers']['num_assignment'] = 0
         self.dataframes['lecturers']['used_timeslot'] = pd.NaT
         self.lect_pool = self.dataframes['lecturers']['kode_dosen'].copy().to_numpy()
+
+        # Preserve original examiner assignments (especially for Sidang Akhir) to avoid overwrites
+        self.original_examiners = {}
+        if 'request' in self.dataframes:
+            for idx, row in self.dataframes['request'].iterrows():
+                nim = row.get('nim')
+                if pd.notna(nim):
+                    self.original_examiners[nim] = {
+                        'examiner_1': row.get('examiner_1'),
+                        'examiner_2': row.get('examiner_2'),
+                        'type': row.get('type')
+                    }
 
         
     def run(self):
@@ -40,6 +54,11 @@ class ThesisScheduler:
             if pd.notna(request['date_time']):
                 print(f"Skipping request {index} as it has already been scheduled.")
                 continue
+
+            # Track whether both examiners were already pre-assigned (from input data)
+            preassigned_both_examiners = pd.notna(request.get('examiner_1')) and pd.notna(request.get('examiner_2'))
+            if preassigned_both_examiners:
+                print(f"Request {index} already has both examiners pre-assigned: {request.get('examiner_1')}, {request.get('examiner_2')}. Will preserve them even if no common timeslot is found.")
             
             # Check if this is a capstone project and if we've already processed this group
             if pd.notna(request.get('capstone_code')):
@@ -103,9 +122,13 @@ class ThesisScheduler:
             if pd.notna(updated_request['examiner_1']) and pd.notna(updated_request['examiner_2']) and assignment_success:
                 print(f"===COMPLETED=== Both examiners assigned in round 1: {updated_request}")
             else:
-                # Cancel partial assignment - reset examiners and datetime for round 2
-                print(f"===INCOMPLETE=== Only partial assignment in round 1, resetting for round 2: {updated_request}")
-                self._reset_partial_assignment(index, updated_request)
+                # If both examiners were originally pre-assigned but we failed to find a time, DO NOT reset them.
+                if preassigned_both_examiners and not assignment_success:
+                    print(f"===PRESERVED=== Both examiners were pre-assigned and no common timeslot found. Preserving existing examiner assignments for request {updated_request['nim']}.")
+                else:
+                    # Cancel partial assignment - reset examiners and datetime for round 2
+                    print(f"===INCOMPLETE=== Only partial assignment in round 1, resetting for round 2: {updated_request}")
+                    self._reset_partial_assignment(index, updated_request)
             
             # if index == 1:
             #     break
@@ -172,6 +195,17 @@ class ThesisScheduler:
         # Count unscheduled requests after round 2
         self.unscheduled_after_round_2 = self._count_unscheduled_requests()
         
+        # ROUND 3 SCHEDULING - Force scheduling by finding earliest available time for assigned actors
+        print(f"Unscheduled requests after round 2: {self.unscheduled_after_round_2}")
+        self.unscheduled_before_round_3 = self.unscheduled_after_round_2
+        
+        if self.unscheduled_before_round_3 > 0:
+            print(f"==== Starting round 3 scheduling for remaining unscheduled requests... ====")
+            self._run_round_3_scheduling()
+            
+        # Count final unscheduled requests after round 3
+        self.unscheduled_after_round_3 = self._count_unscheduled_requests()
+        
         return self.dataframes
 
     def _assign_actor(self, current_request, request_index, ranked_pool_df, request_id, round_num=1):
@@ -202,9 +236,22 @@ class ThesisScheduler:
         
         print(f"Sorted Candidates: {sorted_candidates.head()}")
         
-        # Get the number of examiners needed
-        num_examiners_needed = len([role for role in ['examiner_1', 'examiner_2'] 
-                                   if pd.isna(current_request.get(role))])
+        # Restore original examiners for Sidang Akhir if they were cleared earlier
+        orig = self.original_examiners.get(nim, {})
+        if orig.get('type') == 'Sidang Akhir':
+            for role in ['examiner_1', 'examiner_2']:
+                orig_val = orig.get(role)
+                if pd.notna(orig_val) and pd.isna(current_request.get(role)):
+                    # Restore into main dataframe and current_request copy
+                    self.dataframes['request'].loc[self.dataframes['request']['nim'] == nim, role] = orig_val
+                    current_request[role] = orig_val
+                    print(f"[RESTORE] Restored original {role} '{orig_val}' for Sidang Akhir NIM {nim}")
+
+        # Get the number of examiners needed (after potential restoration)
+        num_examiners_needed = len([
+            role for role in ['examiner_1', 'examiner_2']
+            if pd.isna(current_request.get(role))
+        ])
         
         print(f"Number of examiners needed for request {nim}: {num_examiners_needed}")
         
@@ -287,11 +334,13 @@ class ThesisScheduler:
             
             # Assign examiners only if there are new examiners to assign
             if examiner_codes:
+                # Skip overwriting original Sidang Akhir examiners
+                sidang = (orig.get('type') == 'Sidang Akhir')
                 examiner_idx = 0
-                if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes):
+                if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes) and not (sidang and pd.notna(orig.get('examiner_1'))):
                     self.dataframes['request'].loc[group_mask, 'examiner_1'] = examiner_codes[examiner_idx]
                     examiner_idx += 1
-                if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes):
+                if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes) and not (sidang and pd.notna(orig.get('examiner_2'))):
                     self.dataframes['request'].loc[group_mask, 'examiner_2'] = examiner_codes[examiner_idx]
             
             # Update datetime and status
@@ -303,11 +352,12 @@ class ThesisScheduler:
             
             # Assign examiners only if there are new examiners to assign
             if examiner_codes:
+                sidang = (orig.get('type') == 'Sidang Akhir')
                 examiner_idx = 0
-                if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes):
+                if pd.isna(current_request.get('examiner_1')) and examiner_idx < len(examiner_codes) and not (sidang and pd.notna(orig.get('examiner_1'))):
                     self.dataframes['request'].loc[request_mask, 'examiner_1'] = examiner_codes[examiner_idx]
                     examiner_idx += 1
-                if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes):
+                if pd.isna(current_request.get('examiner_2')) and examiner_idx < len(examiner_codes) and not (sidang and pd.notna(orig.get('examiner_2'))):
                     self.dataframes['request'].loc[request_mask, 'examiner_2'] = examiner_codes[examiner_idx]
             
             # Update datetime and status
@@ -1049,12 +1099,14 @@ class ThesisScheduler:
             
         if pd.notna(request['spv_2']):
             assigned_actor.append('spv_2')
-
-        # Check examiners
-        if pd.isna(request['examiner_1']):
+        # Check examiners. If already specified (pre-assigned), treat them as assigned so they won't be replaced.
+        if pd.notna(request.get('examiner_1')):
+            assigned_actor.append('examiner_1')
+        else:
             to_be_assigned_actor.append('examiner_1')
-            
-        if pd.isna(request['examiner_2']):
+        if pd.notna(request.get('examiner_2')):
+            assigned_actor.append('examiner_2')
+        else:
             to_be_assigned_actor.append('examiner_2')
         
         return assigned_actor, to_be_assigned_actor
@@ -1088,9 +1140,12 @@ class ThesisScheduler:
             'unscheduled_before_round_1': self.unscheduled_before_round_1,
             'unscheduled_before_round_2': self.unscheduled_before_round_2,
             'unscheduled_after_round_2': self.unscheduled_after_round_2,
+            'unscheduled_before_round_3': self.unscheduled_before_round_3,
+            'unscheduled_after_round_3': self.unscheduled_after_round_3,
             'scheduled_after_round_1': self.unscheduled_before_round_1 - self.unscheduled_before_round_2,
             'scheduled_after_round_2': self.unscheduled_before_round_2 - self.unscheduled_after_round_2,
-            'total_scheduled': total_requests - self.unscheduled_after_round_2,
+            'scheduled_after_round_3': self.unscheduled_before_round_3 - self.unscheduled_after_round_3,
+            'total_scheduled': total_requests - self.unscheduled_after_round_3,
             'total_lecturers': total_lecturers,
             'lecturers_with_assignments': total_lecturers_with_assignments,
             'lecturers_without_assignments': total_lecturers - total_lecturers_with_assignments,
@@ -1112,10 +1167,13 @@ class ThesisScheduler:
         print(f"Unscheduled before Round 1: {stats['unscheduled_before_round_1']}")
         print(f"Unscheduled before Round 2: {stats['unscheduled_before_round_2']}")
         print(f"Unscheduled after Round 2: {stats['unscheduled_after_round_2']}")
+        print(f"Unscheduled before Round 3: {stats['unscheduled_before_round_3']}")
+        print(f"Unscheduled after Round 3: {stats['unscheduled_after_round_3']}")
         
         print(f"\nScheduling Success Rate:")
         print(f"  - Scheduled in Round 1: {stats['scheduled_after_round_1']}")
         print(f"  - Scheduled in Round 2: {stats['scheduled_after_round_2']}")
+        print(f"  - Scheduled in Round 3: {stats['scheduled_after_round_3']}")
         print(f"  - Total Scheduled: {stats['total_scheduled']}")
         print(f"  - Success Rate: {(stats['total_scheduled'] / stats['total_requests'] * 100):.1f}%")
         
@@ -1156,21 +1214,26 @@ class ThesisScheduler:
         # Get assigned datetime to revert timeslot changes
         assigned_datetime = current_request.get('date_time')
         
-        # Reset request dataframe
+        # Determine if original examiners must be preserved (Sidang Akhir with both originally set)
+        orig = self.original_examiners.get(nim, {})
+        preserve_exam_1 = (orig.get('type') == 'Sidang Akhir' and pd.notna(orig.get('examiner_1')))
+        preserve_exam_2 = (orig.get('type') == 'Sidang Akhir' and pd.notna(orig.get('examiner_2')))
+
+        def _maybe_clear(df_mask):
+            if not preserve_exam_1:
+                self.dataframes['request'].loc[df_mask, 'examiner_1'] = pd.NaT
+            if not preserve_exam_2:
+                self.dataframes['request'].loc[df_mask, 'examiner_2'] = pd.NaT
+            self.dataframes['request'].loc[df_mask, 'date_time'] = pd.NaT
+            self.dataframes['request'].loc[df_mask, 'status'] = pd.NaT
+
+        # Reset request dataframe (avoid clearing preserved examiners)
         if request_type == 'capstone' and capstone_code:
-            # Reset all requests in the same capstone group
             group_mask = self.dataframes['request']['capstone_code'] == capstone_code
-            self.dataframes['request'].loc[group_mask, 'examiner_1'] = pd.NaT
-            self.dataframes['request'].loc[group_mask, 'examiner_2'] = pd.NaT
-            self.dataframes['request'].loc[group_mask, 'date_time'] = pd.NaT
-            self.dataframes['request'].loc[group_mask, 'status'] = pd.NaT
+            _maybe_clear(group_mask)
         else:
-            # Reset individual request
             request_mask = self.dataframes['request']['nim'] == nim
-            self.dataframes['request'].loc[request_mask, 'examiner_1'] = pd.NaT
-            self.dataframes['request'].loc[request_mask, 'examiner_2'] = pd.NaT
-            self.dataframes['request'].loc[request_mask, 'date_time'] = pd.NaT
-            self.dataframes['request'].loc[request_mask, 'status'] = pd.NaT
+            _maybe_clear(request_mask)
         
         # Revert timeslot assignments
         if assigned_datetime:
@@ -1307,3 +1370,418 @@ class ThesisScheduler:
                         return True
         
         return False
+
+    def _run_round_3_scheduling(self):
+        """
+        Round 3 scheduling: Force scheduling by finding earliest available time for assigned actors,
+        then assign missing examiners based on that time.
+        """
+        # Get all unscheduled requests
+        unscheduled_requests = self.dataframes['request'][
+            self.dataframes['request']['date_time'].isna()
+        ].copy()
+        
+        processed_capstone_groups = set()
+        
+        for index, request in unscheduled_requests.iterrows():
+            print(f"Round 3: Processing request {index}: {request['nim']}")
+            
+            # Skip if already processed (capstone groups)
+            if pd.notna(request.get('capstone_code')):
+                capstone_code = request['capstone_code']
+                if capstone_code in processed_capstone_groups:
+                    print(f"Round 3: Skipping request {index} as capstone group {capstone_code} already processed.")
+                    continue
+                else:
+                    processed_capstone_groups.add(capstone_code)
+            
+            # Check if request is capstone and get required duration
+            capstone_status, request_id = self._check_capstone(request)
+            required_duration = self._check_timeslot_needed(request_id)
+            
+            # Get assigned and unassigned actors
+            assigned_actor, to_be_assigned_actor = self._check_list_actor(request)
+            
+            print(f"Round 3: Required duration: {required_duration}, Assigned actors: {assigned_actor}, To be assigned: {to_be_assigned_actor}")
+            
+            # Step 1: Find earliest available time for assigned actors
+            earliest_available_time = self._find_earliest_available_time(request, assigned_actor, required_duration)
+            
+            if not earliest_available_time:
+                print(f"Round 3: No available time found for request {index}")
+                continue
+                
+            print(f"Round 3: Earliest available time found: {earliest_available_time}")
+            
+            # Step 2: Set the time first (reserve the timeslots)
+            self._reserve_timeslots_for_round3(earliest_available_time, required_duration, request_id)
+            
+            # Step 3: Assign missing examiners based on the assigned time
+            success = self._assign_missing_examiners_round3(request, index, earliest_available_time, to_be_assigned_actor, required_duration)
+            
+            if success:
+                # Update request with assigned time
+                if capstone_status:
+                    # Update all group members
+                    capstone_code = request['capstone_code']
+                    capstone_requests = self.dataframes['request'][
+                        self.dataframes['request']['capstone_code'] == capstone_code
+                    ]
+                    for cap_index in capstone_requests.index:
+                        self.dataframes['request'].at[cap_index, 'date_time'] = earliest_available_time
+                        self.dataframes['request'].at[cap_index, 'status'] = 'Scheduled - Round 3'
+                else:
+                    self.dataframes['request'].at[index, 'date_time'] = earliest_available_time
+                    self.dataframes['request'].at[index, 'status'] = 'Scheduled - Round 3'
+                    
+                print(f"Round 3: Successfully scheduled request {index} at {earliest_available_time}")
+            else:
+                # Revert timeslot reservations if assignment failed
+                self._revert_timeslot_reservations(earliest_available_time, required_duration)
+                print(f"Round 3: Failed to assign examiners for request {index}, reverted timeslots")
+    
+    def _find_earliest_available_time(self, request, assigned_actors, required_duration):
+        """
+        Find the earliest available time slot where all assigned actors are available
+        for the required duration and timeslots are free.
+        
+        Args:
+            request (pandas.Series): Current request
+            assigned_actors (list): List of assigned actor roles
+            required_duration (int): Number of consecutive 30-minute slots needed
+            
+        Returns:
+            str or None: Earliest available datetime string (YYYYMMDD_HHMM) or None if not found
+        """
+        # Get all involved actors (supervisors + any already assigned examiners)
+        all_involved_actors = []
+        
+        # Add supervisors
+        for actor_role in ['spv_1', 'spv_2']:
+            if actor_role in assigned_actors and pd.notna(request.get(actor_role)):
+                all_involved_actors.append(request[actor_role])
+        
+        # Add already assigned examiners
+        for actor_role in ['examiner_1', 'examiner_2']:
+            if actor_role in assigned_actors and pd.notna(request.get(actor_role)):
+                all_involved_actors.append(request[actor_role])
+        
+        if not all_involved_actors:
+            print("Round 3: No assigned actors found to check availability")
+            return None
+        
+        print(f"Round 3: Checking availability for actors: {all_involved_actors}")
+        
+        # Get all timeslot columns sorted chronologically
+        time_columns = [col for col in self.dataframes['lecturer_availability'].columns 
+                       if col not in ['kode_dosen', 'availability_count']]
+        sorted_time_columns = self._sort_timeslots_chronologically(time_columns)
+        
+        # Find the earliest time where all actors are available and timeslots are free
+        for i in range(len(sorted_time_columns) - required_duration + 1):
+            start_timeslot = sorted_time_columns[i]
+            
+            # Check if consecutive timeslots are available
+            consecutive_slots = []
+            for j in range(required_duration):
+                if i + j < len(sorted_time_columns):
+                    consecutive_slots.append(sorted_time_columns[i + j])
+                else:
+                    break
+            
+            if len(consecutive_slots) != required_duration:
+                continue
+            
+            # Check if all actors are available for all consecutive slots
+            all_actors_available = True
+            for actor_code in all_involved_actors:
+                actor_row = self.dataframes['lecturer_availability'][
+                    self.dataframes['lecturer_availability']['kode_dosen'] == actor_code
+                ]
+                
+                if actor_row.empty:
+                    all_actors_available = False
+                    break
+                
+                actor_row = actor_row.iloc[0]
+                
+                # Check availability for all consecutive slots
+                for slot in consecutive_slots:
+                    if slot not in actor_row or actor_row[slot] != 1:
+                        all_actors_available = False
+                        break
+                
+                if not all_actors_available:
+                    break
+            
+            if not all_actors_available:
+                continue
+            
+            # Check if timeslots are free (not occupied)
+            all_timeslots_free = True
+            for slot in consecutive_slots:
+                if not self._is_timeslot_free(slot):
+                    all_timeslots_free = False
+                    break
+            
+            if all_timeslots_free:
+                return start_timeslot
+        
+        print("Round 3: No available time found for all assigned actors")
+        return None
+    
+    def _reserve_timeslots_for_round3(self, start_timeslot, duration, request_id):
+        """
+        Reserve consecutive timeslots starting from the given timeslot.
+        
+        Args:
+            start_timeslot (str): Starting timeslot in format YYYYMMDD_HHMM
+            duration (int): Number of consecutive slots to reserve
+            request_id: Single student ID (str) or list of student IDs for capstone projects
+        """
+        # Parse the start timeslot
+        date_part, time_part = start_timeslot.split('_')
+        start_hour = int(time_part[:2])
+        start_minute = int(time_part[2:])
+        
+        assignment_name = f"R3_{request_id}" if isinstance(request_id, str) else f"R3_{'_'.join(request_id)}"
+        
+        # Reserve consecutive slots
+        current_minutes = start_hour * 60 + start_minute
+        
+        for slot_num in range(duration):
+            current_hour = (current_minutes // 60) % 24
+            current_minute = current_minutes % 60
+            current_time_str = f"{current_hour:02d}{current_minute:02d}"
+            slot_col = f"{date_part}_{current_time_str}"
+            
+            # Find the corresponding row in timeslots dataframe
+            timeslot_row = self.dataframes['timeslots'][
+                self.dataframes['timeslots']['date'] == date_part
+            ]
+            
+            if not timeslot_row.empty:
+                idx = timeslot_row.index[0]
+                if slot_col in self.dataframes['timeslots'].columns:
+                    current_value = self.dataframes['timeslots'].at[idx, slot_col]
+                    if pd.isna(current_value) or current_value == 0:
+                        self.dataframes['timeslots'].at[idx, slot_col] = assignment_name
+                        print(f"Round 3: Reserved timeslot {date_part} {current_time_str} for {assignment_name}")
+            
+            current_minutes += 30
+    
+    def _assign_missing_examiners_round3(self, request, request_index, assigned_time, to_be_assigned_actor, required_duration):
+        """
+        Assign missing examiners for round 3 based on the already assigned time.
+        
+        Args:
+            request (pandas.Series): Current request
+            request_index (int): Index of the request
+            assigned_time (str): Already assigned time slot
+            to_be_assigned_actor (list): List of actor roles to be assigned
+            required_duration (int): Duration of the event
+            
+        Returns:
+            bool: True if all missing examiners were successfully assigned
+        """
+        temp_lect_pool = self.lect_pool.copy()
+        
+        # Remove already assigned actors from the pool
+        assigned_lecturer_codes = []
+        for actor_role in ['spv_1', 'spv_2', 'examiner_1', 'examiner_2']:
+            if pd.notna(request.get(actor_role)):
+                assigned_lecturer_codes.append(request[actor_role])
+        
+        # Filter out assigned lecturers
+        temp_lect_pool = np.array([lect for lect in temp_lect_pool if lect not in assigned_lecturer_codes])
+        
+        # Filter lecturers who are available at the assigned time
+        available_lecturers = []
+        for lecturer_code in temp_lect_pool:
+            if self._is_lecturer_available_at_time(lecturer_code, assigned_time, required_duration):
+                available_lecturers.append(lecturer_code)
+        
+        temp_lect_pool = np.array(available_lecturers)
+        
+        if len(temp_lect_pool) == 0:
+            print(f"Round 3: No available lecturers for time {assigned_time}")
+            return False
+        
+        # Rank lecturers using the same criteria as round 2 but simplified for the assigned time
+        ranked_lecturers = self._rank_lecturers_for_assigned_time(temp_lect_pool, request, assigned_time)
+        
+        if ranked_lecturers.empty:
+            print(f"Round 3: No ranked lecturers available")
+            return False
+        
+        # Assign missing examiners
+        examiner_codes = []
+        num_examiners_needed = len(to_be_assigned_actor)
+        
+        if num_examiners_needed > len(ranked_lecturers):
+            print(f"Round 3: Not enough available lecturers ({len(ranked_lecturers)}) for {num_examiners_needed} examiners")
+            return False
+        
+        # Take top-ranked lecturers
+        for i in range(num_examiners_needed):
+            examiner_codes.append(ranked_lecturers.iloc[i]['kode_dosen'])
+        
+        # Update request dataframe with assigned examiners
+        for i, actor_role in enumerate(to_be_assigned_actor):
+            if i < len(examiner_codes):
+                if pd.notna(request.get('capstone_code')):
+                    # Update all capstone group members
+                    capstone_code = request['capstone_code']
+                    capstone_requests = self.dataframes['request'][
+                        self.dataframes['request']['capstone_code'] == capstone_code
+                    ]
+                    for cap_index in capstone_requests.index:
+                        self.dataframes['request'].at[cap_index, actor_role] = examiner_codes[i]
+                else:
+                    self.dataframes['request'].at[request_index, actor_role] = examiner_codes[i]
+        
+        # Update lecturer assignments
+        for examiner_code in examiner_codes:
+            lecturer_idx = self.dataframes['lecturers'][
+                self.dataframes['lecturers']['kode_dosen'] == examiner_code
+            ].index[0]
+            
+            current_assignments = self.dataframes['lecturers'].at[lecturer_idx, 'num_assignment']
+            self.dataframes['lecturers'].at[lecturer_idx, 'num_assignment'] = current_assignments + 1
+            self.dataframes['lecturers'].at[lecturer_idx, 'used_timeslot'] = assigned_time
+        
+        print(f"Round 3: Successfully assigned examiners {examiner_codes} for time {assigned_time}")
+        return True
+    
+    def _is_lecturer_available_at_time(self, lecturer_code, start_timeslot, duration):
+        """
+        Check if a lecturer is available at the specific time for the required duration.
+        
+        Args:
+            lecturer_code (str): Code of the lecturer
+            start_timeslot (str): Starting timeslot in format YYYYMMDD_HHMM
+            duration (int): Number of consecutive slots needed
+            
+        Returns:
+            bool: True if lecturer is available for the full duration
+        """
+        lecturer_row = self.dataframes['lecturer_availability'][
+            self.dataframes['lecturer_availability']['kode_dosen'] == lecturer_code
+        ]
+        
+        if lecturer_row.empty:
+            return False
+        
+        lecturer_row = lecturer_row.iloc[0]
+        
+        # Generate consecutive timeslot names
+        date_part, time_part = start_timeslot.split('_')
+        start_hour = int(time_part[:2])
+        start_minute = int(time_part[2:])
+        current_minutes = start_hour * 60 + start_minute
+        
+        for slot_num in range(duration):
+            current_hour = (current_minutes // 60) % 24
+            current_minute = current_minutes % 60
+            current_time_str = f"{current_hour:02d}{current_minute:02d}"
+            slot_col = f"{date_part}_{current_time_str}"
+            
+            if slot_col not in lecturer_row or lecturer_row[slot_col] != 1:
+                return False
+            
+            current_minutes += 30
+        
+        return True
+    
+    def _rank_lecturers_for_assigned_time(self, lecturer_pool, request, assigned_time):
+        """
+        Rank lecturers for the already assigned time based on assignments and expertise.
+        
+        Args:
+            lecturer_pool (numpy.ndarray): Array of available lecturer codes
+            request (pandas.Series): Current request
+            assigned_time (str): Already assigned time
+            
+        Returns:
+            pandas.DataFrame: Ranked lecturers
+        """
+        ranked_df = pd.DataFrame({
+            'kode_dosen': lecturer_pool
+        })
+        
+        # Calculate scores
+        ranked_df['num_assignments'] = 0
+        ranked_df['expertise_match'] = False
+        ranked_df['assignment_score'] = 0
+        ranked_df['expertise_score'] = 0
+        ranked_df['total_score'] = 0
+        
+        for idx, row in ranked_df.iterrows():
+            lecturer_code = row['kode_dosen']
+            
+            # Get number of current assignments
+            lecturer_row = self.dataframes['lecturers'][
+                self.dataframes['lecturers']['kode_dosen'] == lecturer_code
+            ]
+            
+            if not lecturer_row.empty:
+                num_assignments = lecturer_row.iloc[0]['num_assignment']
+                ranked_df.at[idx, 'num_assignments'] = num_assignments
+            
+            # Check expertise match
+            expertise_match = self._check_lecturer_expertise_match(lecturer_code, request)
+            ranked_df.at[idx, 'expertise_match'] = expertise_match
+        
+        # Calculate normalized scores
+        if not ranked_df.empty:
+            max_assignments = ranked_df['num_assignments'].max()
+            if max_assignments > 0:
+                # Lower assignments = higher score
+                ranked_df['assignment_score'] = (max_assignments - ranked_df['num_assignments']) / max_assignments * 100
+            else:
+                ranked_df['assignment_score'] = 100
+            
+            # Expertise bonus
+            ranked_df['expertise_score'] = ranked_df['expertise_match'].astype(int) * 50
+            
+            # Total score
+            ranked_df['total_score'] = ranked_df['assignment_score'] + ranked_df['expertise_score']
+        
+        # Sort by total score (descending)
+        ranked_df = ranked_df.sort_values('total_score', ascending=False).reset_index(drop=True)
+        
+        return ranked_df
+    
+    def _revert_timeslot_reservations(self, start_timeslot, duration):
+        """
+        Revert timeslot reservations if assignment failed.
+        
+        Args:
+            start_timeslot (str): Starting timeslot in format YYYYMMDD_HHMM
+            duration (int): Number of consecutive slots to revert
+        """
+        date_part, time_part = start_timeslot.split('_')
+        start_hour = int(time_part[:2])
+        start_minute = int(time_part[2:])
+        current_minutes = start_hour * 60 + start_minute
+        
+        for slot_num in range(duration):
+            current_hour = (current_minutes // 60) % 24
+            current_minute = current_minutes % 60
+            current_time_str = f"{current_hour:02d}{current_minute:02d}"
+            slot_col = f"{date_part}_{current_time_str}"
+            
+            # Find the corresponding row in timeslots dataframe
+            timeslot_row = self.dataframes['timeslots'][
+                self.dataframes['timeslots']['date'] == date_part
+            ]
+            
+            if not timeslot_row.empty:
+                idx = timeslot_row.index[0]
+                if slot_col in self.dataframes['timeslots'].columns:
+                    current_value = self.dataframes['timeslots'].at[idx, slot_col]
+                    if isinstance(current_value, str) and current_value.startswith('R3_'):
+                        self.dataframes['timeslots'].at[idx, slot_col] = 0
+                        print(f"Round 3: Reverted timeslot {date_part} {current_time_str}")
+            
+            current_minutes += 30
