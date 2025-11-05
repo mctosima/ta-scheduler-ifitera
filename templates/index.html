@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TA Scheduler - Web Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        
+        .form-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #218838;
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .file-upload {
+            border: 2px dashed #ddd;
+            border-radius: 8px;
+            padding: 30px;
+            text-align: center;
+            background: white;
+            transition: all 0.3s;
+        }
+        
+        .file-upload:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+        
+        .file-upload input[type="file"] {
+            display: none;
+        }
+        
+        .file-upload label {
+            cursor: pointer;
+            color: #667eea;
+            font-weight: 600;
+        }
+        
+        .output-console {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            max-height: 400px;
+            overflow-y: auto;
+            line-height: 1.6;
+        }
+        
+        .output-console .line {
+            margin-bottom: 5px;
+        }
+        
+        .output-console .success {
+            color: #4ec9b0;
+        }
+        
+        .output-console .error {
+            color: #f48771;
+        }
+        
+        .output-console .warning {
+            color: #dcdcaa;
+        }
+        
+        .file-list {
+            display: grid;
+            gap: 10px;
+        }
+        
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px;
+            background: white;
+            border-radius: 6px;
+            border: 1px solid #e0e0e0;
+        }
+        
+        .file-item:hover {
+            border-color: #667eea;
+            background: #f8f9ff;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        
+        .status-running {
+            background: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-completed {
+            background: #d4edda;
+            color: #155724;
+        }
+        
+        .status-error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+        }
+        
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        
+        .spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 3px solid rgba(102, 126, 234, 0.3);
+            border-radius: 50%;
+            border-top-color: #667eea;
+            animation: spin 1s ease-in-out infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎓 TA Scheduler</h1>
+            <p>Web Interface for Defense Scheduling System</p>
+        </div>
+        
+        <div class="content">
+            <!-- File Upload Section -->
+            <div class="section">
+                <h2>📁 Upload Input Files</h2>
+                <div class="form-row">
+                    <div class="file-upload">
+                        <input type="file" id="reqFile" accept=".csv" onchange="uploadFile('reqFile', 'Request')">
+                        <label for="reqFile">
+                            📄 Upload Request CSV<br>
+                            <small style="color: #666;">Click to select file</small>
+                        </label>
+                    </div>
+                    <div class="file-upload">
+                        <input type="file" id="availFile" accept=".csv" onchange="uploadFile('availFile', 'Availability')">
+                        <label for="availFile">
+                            📅 Upload Availability CSV<br>
+                            <small style="color: #666;">Click to select file</small>
+                        </label>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px;">
+                    <strong>Available Input Files:</strong>
+                    <div class="file-list" style="margin-top: 10px;">
+                        {% if input_files %}
+                            {% for file in input_files %}
+                            <div class="file-item">
+                                <span>📄 {{ file }}</span>
+                            </div>
+                            {% endfor %}
+                        {% else %}
+                            <div class="alert alert-info">No input files uploaded yet.</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Configuration Section -->
+            <div class="section">
+                <h2>⚙️ Configuration</h2>
+                <form id="configForm">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="req_fname">Request Filename:</label>
+                            <select id="req_fname" name="req_fname">
+                                {% for file in input_files %}
+                                    {% if file.startswith('req_') %}
+                                    <option value="{{ file }}" {% if file == config.req_fname %}selected{% endif %}>{{ file }}</option>
+                                    {% endif %}
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label for="avail_fname">Availability Filename:</label>
+                            <select id="avail_fname" name="avail_fname">
+                                {% for file in input_files %}
+                                    {% if file.startswith('avail_') %}
+                                    <option value="{{ file }}" {% if file == config.avail_fname %}selected{% endif %}>{{ file }}</option>
+                                    {% endif %}
+                                {% endfor %}
+                            </select>
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="parallel_event">Parallel Events:</label>
+                            <input type="number" id="parallel_event" name="parallel_event" value="{{ config.parallel_event }}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="default_timeslot">Default Timeslot (Proposal):</label>
+                            <input type="number" id="default_timeslot" name="default_timeslot" value="{{ config.default_timeslot }}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="default_timeslot_sidang">Default Timeslot (Sidang):</label>
+                            <input type="number" id="default_timeslot_sidang" name="default_timeslot_sidang" value="{{ config.default_timeslot_sidang }}" min="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="capstone_duration_2">Capstone 2 Students:</label>
+                            <input type="number" id="capstone_duration_2" name="capstone_duration_2" value="{{ config.capstone_duration_2 }}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="capstone_duration_3">Capstone 3 Students:</label>
+                            <input type="number" id="capstone_duration_3" name="capstone_duration_3" value="{{ config.capstone_duration_3 }}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="capstone_duration_4">Capstone 4 Students:</label>
+                            <input type="number" id="capstone_duration_4" name="capstone_duration_4" value="{{ config.capstone_duration_4 }}" min="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="capstone_duration_sidang_2">Capstone Sidang 2 Students:</label>
+                            <input type="number" id="capstone_duration_sidang_2" name="capstone_duration_sidang_2" value="{{ config.capstone_duration_sidang_2 }}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="capstone_duration_sidang_3">Capstone Sidang 3 Students:</label>
+                            <input type="number" id="capstone_duration_sidang_3" name="capstone_duration_sidang_3" value="{{ config.capstone_duration_sidang_3 }}" min="1">
+                        </div>
+                        <div class="form-group">
+                            <label for="capstone_duration_sidang_4">Capstone Sidang 4 Students:</label>
+                            <input type="number" id="capstone_duration_sidang_4" name="capstone_duration_sidang_4" value="{{ config.capstone_duration_sidang_4 }}" min="1">
+                        </div>
+                    </div>
+                    
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="out_fname">Output Filename:</label>
+                            <input type="text" id="out_fname" name="out_fname" value="{{ config.out_fname }}">
+                        </div>
+                        <div class="form-group">
+                            <label for="out_timeslot">Timeslot Output:</label>
+                            <input type="text" id="out_timeslot" name="out_timeslot" value="{{ config.out_timeslot }}">
+                        </div>
+                        <div class="form-group">
+                            <label for="out_lectureschedule">Lecture Schedule Output:</label>
+                            <input type="text" id="out_lectureschedule" name="out_lectureschedule" value="{{ config.out_lectureschedule }}">
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="time_slot_dur">Time Slot Duration (minutes):</label>
+                        <input type="number" id="time_slot_dur" name="time_slot_dur" value="{{ config.time_slot_dur }}" min="1">
+                    </div>
+                    
+                    <button type="submit" class="btn btn-secondary">💾 Save Configuration</button>
+                </form>
+            </div>
+            
+            <!-- Run Section -->
+            <div class="section">
+                <h2>▶️ Run Scheduler</h2>
+                <div id="statusArea" style="margin-bottom: 15px;"></div>
+                <button id="runBtn" class="btn btn-primary" onclick="runScheduler()">🚀 Start Scheduling</button>
+                <div id="outputConsole" class="output-console" style="margin-top: 20px; display: none;">
+                    <div id="consoleOutput"></div>
+                </div>
+            </div>
+            
+            <!-- Output Files Section -->
+            <div class="section">
+                <h2>📊 Output Files</h2>
+                {% if output_files %}
+                    <div class="file-list">
+                        {% for file in output_files %}
+                        <div class="file-item">
+                            <span>📄 {{ file }}</span>
+                            <div>
+                                <button class="btn btn-success" style="padding: 8px 16px; margin-right: 10px;" onclick="downloadFile('{{ file }}')">⬇️ Download</button>
+                                {% if 'timeslot' in file %}
+                                <button class="btn btn-secondary" style="padding: 8px 16px;" onclick="validateFile('{{ file }}')">✓ Validate</button>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                {% else %}
+                    <div class="alert alert-info">No output files yet. Run the scheduler to generate outputs.</div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let statusCheckInterval = null;
+        
+        function uploadFile(inputId, type) {
+            const input = document.getElementById(inputId);
+            const file = input.files[0];
+            
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert(`${type} file uploaded successfully: ${data.filename}`);
+                    location.reload();
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            })
+            .catch(error => {
+                alert(`Error uploading file: ${error}`);
+            });
+        }
+        
+        document.getElementById('configForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            const formData = new FormData(this);
+            const config = Object.fromEntries(formData);
+            
+            fetch('/config', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(config)
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Configuration saved successfully!');
+                } else {
+                    alert(`Error: ${data.error}`);
+                }
+            })
+            .catch(error => {
+                alert(`Error saving configuration: ${error}`);
+            });
+        });
+        
+        function runScheduler() {
+            const runBtn = document.getElementById('runBtn');
+            const outputConsole = document.getElementById('outputConsole');
+            const consoleOutput = document.getElementById('consoleOutput');
+            const statusArea = document.getElementById('statusArea');
+            
+            runBtn.disabled = true;
+            outputConsole.style.display = 'block';
+            consoleOutput.innerHTML = '<div class="line">Starting scheduler...</div>';
+            statusArea.innerHTML = '<span class="status-badge status-running"><span class="spinner"></span> Running...</span>';
+            
+            fetch('/run', {
+                method: 'POST'
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // Start polling for status
+                    statusCheckInterval = setInterval(checkStatus, 1000);
+                } else {
+                    alert(`Error: ${data.error}`);
+                    runBtn.disabled = false;
+                    statusArea.innerHTML = '';
+                }
+            })
+            .catch(error => {
+                alert(`Error starting scheduler: ${error}`);
+                runBtn.disabled = false;
+                statusArea.innerHTML = '';
+            });
+        }
+        
+        function checkStatus() {
+            fetch('/status')
+            .then(response => response.json())
+            .then(data => {
+                const consoleOutput = document.getElementById('consoleOutput');
+                const runBtn = document.getElementById('runBtn');
+                const statusArea = document.getElementById('statusArea');
+                
+                // Update console output
+                if (data.output.length > 0) {
+                    consoleOutput.innerHTML = data.output.map(line => {
+                        let className = 'line';
+                        if (line.includes('✓') || line.includes('Success') || line.includes('COMPLETE')) {
+                            className += ' success';
+                        } else if (line.includes('Error') || line.includes('Failed') || line.includes('✗')) {
+                            className += ' error';
+                        } else if (line.includes('Warning') || line.includes('⚠️')) {
+                            className += ' warning';
+                        }
+                        return `<div class="${className}">${escapeHtml(line)}</div>`;
+                    }).join('');
+                    
+                    // Auto-scroll to bottom
+                    consoleOutput.scrollTop = consoleOutput.scrollHeight;
+                }
+                
+                // Check if completed
+                if (!data.running) {
+                    clearInterval(statusCheckInterval);
+                    runBtn.disabled = false;
+                    
+                    if (data.completed) {
+                        statusArea.innerHTML = '<span class="status-badge status-completed">✓ Completed</span>';
+                        setTimeout(() => location.reload(), 2000);
+                    } else if (data.error) {
+                        statusArea.innerHTML = '<span class="status-badge status-error">✗ Failed</span>';
+                        alert(`Error: ${data.error}`);
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('Error checking status:', error);
+            });
+        }
+        
+        function downloadFile(filename) {
+            window.location.href = `/download/${filename}`;
+        }
+        
+        function validateFile(filename) {
+            fetch(`/validate/${filename}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    alert('Validation passed! No conflicts found.\n\n' + data.output);
+                } else {
+                    alert('Validation result:\n\n' + (data.output || data.error));
+                }
+            })
+            .catch(error => {
+                alert(`Error validating file: ${error}`);
+            });
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+    </script>
+</body>
+</html>

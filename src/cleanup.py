@@ -25,10 +25,30 @@ class Cleaner:
         self.config = config
 
     def clean(self):
+        self._remove_duplicates()
         self._clean_request()
         self._clean_timeslot()
         self._clean_lecturerschedule()
         return self.dataframe
+    
+    def _remove_duplicates(self):
+        """
+        Remove duplicate entries in the request dataframe.
+        Keeps only the LAST occurrence of each NIM (most recent scheduling attempt).
+        """
+        initial_count = len(self.dataframe['request'])
+        
+        # Remove duplicates based on 'nim', keeping the last occurrence
+        self.dataframe['request'] = self.dataframe['request'].drop_duplicates(
+            subset=['nim'], 
+            keep='last'  # Keep the last (most recent) entry
+        )
+        
+        duplicates_removed = initial_count - len(self.dataframe['request'])
+        
+        if duplicates_removed > 0:
+            print(f"\n✓ Removed {duplicates_removed} duplicate(s) from output (kept latest scheduling for each NIM)")
+            print(f"  Final count: {len(self.dataframe['request'])} unique requests\n")
     
     def _clean_lecturerschedule(self):
         # Remove the expertise column
