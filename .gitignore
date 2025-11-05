@@ -74,3 +74,5 @@ schedule_request_multiple.csv
 
 # Optional: Uncomment to ignore generated output files
 # output/*.csv
+ta_scheduler.zip
+tasys_dup.zip
